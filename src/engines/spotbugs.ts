@@ -32,15 +32,15 @@ function mapSeverity(type: string, priority: string): Severity {
   return "low";
 }
 
-function findJavaFiles(dir: string): string[] {
+function findSourceFiles(dir: string, ext: string): string[] {
   const out: string[] = [];
   const walk = (d: string) => {
     for (const entry of fs.readdirSync(d, { withFileTypes: true })) {
       const full = path.join(d, entry.name);
       if (entry.isDirectory()) {
-        if (entry.name === "node_modules" || entry.name === ".git") continue;
+        if (entry.name === "node_modules" || entry.name === ".git" || entry.name === "target" || entry.name === "build") continue;
         walk(full);
-      } else if (entry.name.endsWith(".java")) {
+      } else if (entry.name.endsWith(ext)) {
         out.push(full);
       }
     }
@@ -49,10 +49,21 @@ function findJavaFiles(dir: string): string[] {
   return out;
 }
 
+function findJavaFiles(dir: string): string[] {
+  return findSourceFiles(dir, ".java");
+}
+
+function findKotlinFiles(dir: string): string[] {
+  return findSourceFiles(dir, ".kt");
+}
+
 export async function runSpotbugs(target: string): Promise<EngineResult> {
-  const javaFiles = findJavaFiles(path.resolve(target));
-  if (javaFiles.length === 0) {
-    return { engine: "spotbugs", findings: [], available: true, note: "no .java files found" };
+  const abs = path.resolve(target);
+  const javaFiles = findJavaFiles(abs);
+  const kotlinFiles = findKotlinFiles(abs);
+  const allSources = [...javaFiles, ...kotlinFiles];
+  if (allSources.length === 0) {
+    return { engine: "spotbugs", findings: [], available: true, note: "no .java/.kt files found" };
   }
 
   if (!(await which("javac"))) {
@@ -62,22 +73,60 @@ export async function runSpotbugs(target: string): Promise<EngineResult> {
   const workdir = fs.mkdtempSync(path.join(os.tmpdir(), "polyscan-spotbugs-"));
   const classesDir = path.join(workdir, "classes");
   fs.mkdirSync(classesDir, { recursive: true });
+  const noteParts: string[] = [];
 
-  // Compile (best-effort; -proc:none, ignore missing deps by continuing).
-  const compile = await run("bash", [
-    "-lc",
-    `javac -d ${classesDir} ${javaFiles.map((f) => `"${f}"`).join(" ")}`,
-  ]);
-  if (compile.exitCode !== 0) {
-    core.warning(`javac reported issues (continuing): ${compile.stderr.slice(0, 200)}`);
+  // Compile Java (best-effort; ignore missing deps by continuing).
+  if (javaFiles.length > 0) {
+    const compile = await run("bash", [
+      "-lc",
+      `javac -d ${classesDir} ${javaFiles.map((f) => `"${f}"`).join(" ")}`,
+    ]);
+    if (compile.exitCode !== 0) {
+      core.warning(`javac reported issues (continuing): ${compile.stderr.slice(0, 200)}`);
+      noteParts.push("javac had errors");
+    }
   }
+
+  // Compile Kotlin via kotlinc (install on demand). SpotBugs analyses the resulting .class files.
+  if (kotlinFiles.length > 0) {
+    const hasKotlinc = await which("kotlinc");
+    if (!hasKotlinc) {
+      core.info("kotlinc not found — installing via sdkman-less direct download…");
+      const kt = await run("bash", [
+        "-lc",
+        [
+          "set -e",
+          "KV=1.9.24",
+          `cd ${workdir}`,
+          'curl -sSL -o kotlin.zip "https://github.com/JetBrains/kotlin/releases/download/v${KV}/kotlin-compiler-${KV}.zip"',
+          "unzip -q kotlin.zip",
+        ].join("\n"),
+      ]);
+      if (kt.exitCode !== 0) {
+        core.warning(`kotlinc install failed (continuing without Kotlin): ${kt.stderr.slice(0, 200)}`);
+        noteParts.push("kotlinc unavailable");
+      }
+    }
+    const kotlincBin = (await which("kotlinc")) ? "kotlinc" : `${workdir}/kotlinc/bin/kotlinc`;
+    if (fs.existsSync(kotlincBin) || (await which("kotlinc"))) {
+      const ktc = await run("bash", [
+        "-lc",
+        `"${kotlincBin}" ${kotlinFiles.map((f) => `"${f}"`).join(" ")} -d ${classesDir} 2>&1 || true`,
+      ]);
+      if (ktc.exitCode !== 0) {
+        core.warning(`kotlinc reported issues (continuing): ${ktc.stderr.slice(0, 200)}`);
+        noteParts.push("kotlinc had errors");
+      }
+    }
+  }
+
   const compiled = fs.existsSync(classesDir) && fs.readdirSync(classesDir).length > 0;
   if (!compiled) {
     return {
       engine: "spotbugs",
       findings: [],
       available: false,
-      note: "compilation produced no .class files",
+      note: `compilation produced no .class files${noteParts.length ? " (" + noteParts.join("; ") + ")" : ""}`,
     };
   }
 
@@ -124,8 +173,13 @@ export async function runSpotbugs(target: string): Promise<EngineResult> {
   }
 
   const xml = fs.readFileSync(xmlOut, "utf-8");
-  const findings = parseSpotbugsXml(xml, javaFiles);
-  return { engine: "spotbugs", findings, available: true };
+  const findings = parseSpotbugsXml(xml, allSources);
+  return {
+    engine: "spotbugs",
+    findings,
+    available: true,
+    note: noteParts.length ? noteParts.join("; ") : undefined,
+  };
 }
 
 // Lightweight XML parse (avoids a heavy XML dependency in the bundle).

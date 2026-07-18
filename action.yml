@@ -11,7 +11,7 @@ inputs:
     required: false
     default: "."
   engines:
-    description: "Comma-separated engines: semgrep,bandit,eslint,spotbugs"
+    description: "Comma-separated engines: semgrep,bandit,eslint,spotbugs,trivy"
     required: false
     default: "semgrep,bandit,eslint"
   max-critical:

@@ -72,9 +72,10 @@ jobs:
 | **Semgrep** | many | `--config auto` |
 | **Bandit** | Python | installed via pip on demand |
 | **ESLint** | JS/TS | `no-eval` / `no-implied-eval` / `no-new-func` |
-| **SpotBugs + FindSecBugs** | Java | compiles `.java`, downloads engine on demand |
+| **SpotBugs + FindSecBugs** | Java + **Kotlin** | compiles `.java` (javac) and `.kt` (kotlinc, downloaded on demand) |
+| **Trivy** | deps + IaC | SCA (vulnerable dependencies / CVEs) + misconfig; binary downloaded on demand |
 
-Python engines are auto-installed via `pip`; SpotBugs is downloaded on demand and needs a JDK on the runner (`ubuntu-latest` ships one).
+Python engines are auto-installed via `pip`; SpotBugs and Trivy are downloaded on demand. SpotBugs needs a JDK on the runner (`ubuntu-latest` ships one); Kotlin analysis pulls `kotlinc` automatically. Trivy runs `--offline-scan` to avoid Maven Central rate limits.
 
 ## Development
 

@@ -9,6 +9,7 @@ import { runSemgrep } from "./engines/semgrep";
 import { runBandit } from "./engines/bandit";
 import { runEslint } from "./engines/eslint";
 import { runSpotbugs } from "./engines/spotbugs";
+import { runTrivy } from "./engines/trivy";
 import { evaluateGate } from "./gate";
 import { toSarif } from "./sarif";
 import { toSbom } from "./sbom";
@@ -38,6 +39,8 @@ async function runEngine(name: string, target: string): Promise<EngineResult> {
         return await runEslint(target);
       case "spotbugs":
         return await runSpotbugs(target);
+      case "trivy":
+        return await runTrivy(target);
       default:
         return { engine: name, findings: [], available: false, note: "unknown engine" };
     }
