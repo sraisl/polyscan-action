@@ -15,11 +15,12 @@ jobs:
           node-version: "20"
       - run: npm ci
       - run: npm run typecheck
-      - name: Verify dist/ is up to date
+      - name: Verify bundled entrypoint is up to date
         run: |
           npm run build
-          if [ -n "$(git status --porcelain dist/)" ]; then
-            echo "::error::dist/ is out of date — run 'npm run build' and commit."
-            git diff --stat dist/
+          # Only the executable bundle must match; source maps are not deterministic.
+          if [ -n "$(git status --porcelain dist/index.js)" ]; then
+            echo "::error::dist/index.js is out of date — run 'npm run build' and commit."
+            git diff --stat dist/index.js
             exit 1
           fi
