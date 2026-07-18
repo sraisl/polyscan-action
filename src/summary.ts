@@ -49,7 +49,8 @@ export function renderSummary(
     lines.push("|---|---|---|---|");
     const shown = findings.slice(0, 50);
     for (const f of shown) {
-      const loc = `${f.file.replace(/^\.\//, "")}:${f.line}`;
+      const cleanFile = f.file.replace(/^\.\//, "");
+      const loc = f.line > 0 ? `${cleanFile}:${f.line}` : cleanFile;
       const cwe = f.cwe ? ` (${f.cwe})` : "";
       lines.push(
         `| ${SEV_EMOJI[f.severity]} ${f.severity} | \`${f.ruleId}\`${cwe} | \`${loc}\` | ${f.engine} |`,
