@@ -1,0 +1,74 @@
+name: "PolyScan"
+description: "Multi-language SAST scan (Semgrep, Bandit, ESLint, SpotBugs) with Quality Gate, SARIF + CycloneDX SBOM and job summary — native TypeScript action"
+author: "Stefan Raisl"
+branding:
+  icon: "shield"
+  color: "red"
+
+inputs:
+  target:
+    description: "Path to scan (default: repo root)"
+    required: false
+    default: "."
+  engines:
+    description: "Comma-separated engines: semgrep,bandit,eslint,spotbugs"
+    required: false
+    default: "semgrep,bandit,eslint"
+  max-critical:
+    description: "Max critical findings allowed before the Quality Gate fails"
+    required: false
+    default: "0"
+  max-high:
+    description: "Max high findings allowed before the Quality Gate fails"
+    required: false
+    default: "0"
+  max-medium:
+    description: "Max medium findings allowed before the Quality Gate fails"
+    required: false
+    default: "50"
+  gate:
+    description: "Enforce the Quality Gate (fail the job when thresholds are exceeded)"
+    required: false
+    default: "true"
+  sarif:
+    description: "Write a SARIF 2.1.0 report (polyscan.sarif)"
+    required: false
+    default: "true"
+  sbom:
+    description: "Write a CycloneDX SBOM (polyscan.sbom.json)"
+    required: false
+    default: "false"
+  upload-artifacts:
+    description: "Upload SARIF + SBOM as workflow artifacts"
+    required: false
+    default: "true"
+  upload-sarif:
+    description: "Upload SARIF to GitHub code scanning (needs security-events: write)"
+    required: false
+    default: "false"
+  output-dir:
+    description: "Directory for generated reports"
+    required: false
+    default: "."
+
+outputs:
+  total:
+    description: "Total number of findings"
+  critical:
+    description: "Number of critical findings"
+  high:
+    description: "Number of high findings"
+  medium:
+    description: "Number of medium findings"
+  low:
+    description: "Number of low findings"
+  gate-passed:
+    description: "'true' if the Quality Gate passed, otherwise 'false'"
+  sarif-file:
+    description: "Path to the generated SARIF file (if any)"
+  sbom-file:
+    description: "Path to the generated SBOM file (if any)"
+
+runs:
+  using: "node20"
+  main: "dist/index.js"

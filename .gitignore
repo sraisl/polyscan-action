@@ -1,0 +1,7 @@
+node_modules/
+lib/
+*.log
+.DS_Store
+polyscan.sarif
+polyscan.sbom.json
+polyscan-summary.md

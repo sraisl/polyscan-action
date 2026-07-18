@@ -1,0 +1,42 @@
+name: Self Test
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  selftest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run PolyScan on test fixtures
+        id: scan
+        uses: ./
+        with:
+          target: "test-fixtures"
+          engines: "semgrep,bandit,eslint,spotbugs"
+          gate: "false"          # fixtures are intentionally vulnerable
+          sarif: "true"
+          sbom: "true"
+          upload-artifacts: "true"
+
+      - name: Assert findings were produced
+        run: |
+          echo "total=${{ steps.scan.outputs.total }}"
+          echo "high=${{ steps.scan.outputs.high }}"
+          if [ "${{ steps.scan.outputs.total }}" -lt "5" ]; then
+            echo "::error::expected >=5 findings, got ${{ steps.scan.outputs.total }}"
+            exit 1
+          fi
+
+      - name: Upload SARIF to code scanning
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: polyscan.sarif
