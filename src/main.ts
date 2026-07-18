@@ -56,7 +56,7 @@ async function runEngine(name: string, target: string): Promise<EngineResult> {
 
 async function main(): Promise<void> {
   const target = core.getInput("target") || ".";
-  const engines = (core.getInput("engines") || "semgrep,bandit,eslint")
+  const engines = (core.getInput("engines") || "semgrep,bandit,eslint,spotbugs,trivy")
     .split(",")
     .map((e) => e.trim())
     .filter(Boolean);

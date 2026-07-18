@@ -72,10 +72,12 @@ jobs:
 | **Semgrep** | many | `--config auto` |
 | **Bandit** | Python | installed via pip on demand |
 | **ESLint** | JS/TS | `no-eval` / `no-implied-eval` / `no-new-func` |
-| **SpotBugs + FindSecBugs** | Java + **Kotlin** | compiles `.java` (javac) and `.kt` (kotlinc, downloaded on demand) |
+| **SpotBugs + FindSecBugs** | Java + Kotlin | **build-aware**: runs `mvn compile` / `gradle classes` when a build file is present (full dependency classpath), else falls back to direct `javac`/`kotlinc` |
 | **Trivy** | deps + IaC | SCA (vulnerable dependencies / CVEs) + misconfig; binary downloaded on demand |
 
-Python engines are auto-installed via `pip`; SpotBugs and Trivy are downloaded on demand. SpotBugs needs a JDK on the runner (`ubuntu-latest` ships one); Kotlin analysis pulls `kotlinc` automatically. Trivy runs `--offline-scan` to avoid Maven Central rate limits.
+Python engines are auto-installed via `pip`; SpotBugs and Trivy are downloaded on demand. SpotBugs is **build-aware** — for real Java/Kotlin projects it invokes the project's own build (Maven/Gradle) so the full dependency classpath is available, which is required to detect data-flow bugs (SQLi, command injection, etc.). It needs a JDK on the runner (`ubuntu-latest` ships one). Trivy runs `--offline-scan` to avoid Maven Central rate limits.
+
+**Default: all engines run.** Restrict via the `engines` input, e.g. `engines: "spotbugs,trivy"`.
 
 ## Development
 

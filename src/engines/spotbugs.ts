@@ -57,6 +57,58 @@ function findKotlinFiles(dir: string): string[] {
   return findSourceFiles(dir, ".kt");
 }
 
+function findClassDirs(dir: string): string[] {
+  // Look for typical compiled-output directories.
+  const candidates = [
+    "target/classes", // Maven
+    "build/classes/kotlin/main", // Gradle Kotlin
+    "build/classes/java/main", // Gradle Java
+    "out/production/classes", // IntelliJ
+  ];
+  const found: string[] = [];
+  for (const c of candidates) {
+    const p = path.join(dir, c);
+    if (fs.existsSync(p) && fs.readdirSync(p).length > 0) found.push(p);
+  }
+  return found;
+}
+
+async function tryProjectBuild(
+  abs: string,
+  noteParts: string[],
+): Promise<string[]> {
+  // Maven
+  if (fs.existsSync(path.join(abs, "pom.xml")) && (await which("mvn"))) {
+    core.info("Detected pom.xml — running 'mvn compile' for a full classpath…");
+    const res = await run("bash", [
+      "-lc",
+      `cd "${abs}" && mvn -q -B -DskipTests compile 2>&1 || true`,
+    ]);
+    if (res.exitCode !== 0) noteParts.push("mvn compile had errors");
+    const dirs = findClassDirs(abs);
+    if (dirs.length) return dirs;
+  }
+  // Gradle
+  const gradlew = path.join(abs, "gradlew");
+  const hasGradle =
+    fs.existsSync(path.join(abs, "build.gradle")) ||
+    fs.existsSync(path.join(abs, "build.gradle.kts"));
+  if (hasGradle) {
+    const gradleCmd = fs.existsSync(gradlew) ? `"${gradlew}"` : (await which("gradle")) ? "gradle" : "";
+    if (gradleCmd) {
+      core.info("Detected Gradle build — running 'classes' task for a full classpath…");
+      const res = await run("bash", [
+        "-lc",
+        `cd "${abs}" && ${gradleCmd} classes --console=plain -q 2>&1 || true`,
+      ]);
+      if (res.exitCode !== 0) noteParts.push("gradle build had errors");
+      const dirs = findClassDirs(abs);
+      if (dirs.length) return dirs;
+    }
+  }
+  return [];
+}
+
 export async function runSpotbugs(target: string): Promise<EngineResult> {
   const abs = path.resolve(target);
   const javaFiles = findJavaFiles(abs);
@@ -66,67 +118,67 @@ export async function runSpotbugs(target: string): Promise<EngineResult> {
     return { engine: "spotbugs", findings: [], available: true, note: "no .java/.kt files found" };
   }
 
-  if (!(await which("javac"))) {
-    return { engine: "spotbugs", findings: [], available: false, note: "javac not available" };
-  }
-
   const workdir = fs.mkdtempSync(path.join(os.tmpdir(), "polyscan-spotbugs-"));
-  const classesDir = path.join(workdir, "classes");
-  fs.mkdirSync(classesDir, { recursive: true });
   const noteParts: string[] = [];
 
-  // Compile Java (best-effort; ignore missing deps by continuing).
-  if (javaFiles.length > 0) {
-    const compile = await run("bash", [
-      "-lc",
-      `javac -d ${classesDir} ${javaFiles.map((f) => `"${f}"`).join(" ")}`,
-    ]);
-    if (compile.exitCode !== 0) {
-      core.warning(`javac reported issues (continuing): ${compile.stderr.slice(0, 200)}`);
-      noteParts.push("javac had errors");
+  // Strategy 1 (preferred): use the project's own build so the full dependency
+  // classpath is present — this is what makes SpotBugs reliable on real Java/Kotlin apps.
+  let classDirs = await tryProjectBuild(abs, noteParts);
+
+  // Strategy 2 (fallback): direct compilation without dependencies (best-effort;
+  // only produces .class files for code that doesn't need third-party imports).
+  if (classDirs.length === 0) {
+    if (!(await which("javac"))) {
+      return { engine: "spotbugs", findings: [], available: false, note: "no build tool succeeded and javac not available" };
+    }
+    core.info("No build output found — falling back to direct javac/kotlinc compilation…");
+    const classesDir = path.join(workdir, "classes");
+    fs.mkdirSync(classesDir, { recursive: true });
+
+    if (javaFiles.length > 0) {
+      const compile = await run("bash", [
+        "-lc",
+        `javac -d ${classesDir} ${javaFiles.map((f) => `"${f}"`).join(" ")} 2>&1 || true`,
+      ]);
+      if (compile.exitCode !== 0) noteParts.push("javac had errors (missing deps?)");
+    }
+
+    if (kotlinFiles.length > 0) {
+      if (!(await which("kotlinc"))) {
+        core.info("kotlinc not found — downloading…");
+        const kt = await run("bash", [
+          "-lc",
+          [
+            "set -e",
+            "KV=1.9.24",
+            `cd ${workdir}`,
+            'curl -sSL -o kotlin.zip "https://github.com/JetBrains/kotlin/releases/download/v${KV}/kotlin-compiler-${KV}.zip"',
+            "unzip -q kotlin.zip",
+          ].join("\n"),
+        ]);
+        if (kt.exitCode !== 0) noteParts.push("kotlinc unavailable");
+      }
+      const kotlincBin = (await which("kotlinc")) ? "kotlinc" : `${workdir}/kotlinc/bin/kotlinc`;
+      if (fs.existsSync(kotlincBin) || (await which("kotlinc"))) {
+        const ktc = await run("bash", [
+          "-lc",
+          `"${kotlincBin}" ${kotlinFiles.map((f) => `"${f}"`).join(" ")} -d ${classesDir} 2>&1 || true`,
+        ]);
+        if (ktc.exitCode !== 0) noteParts.push("kotlinc had errors (missing deps?)");
+      }
+    }
+
+    if (fs.existsSync(classesDir) && fs.readdirSync(classesDir).length > 0) {
+      classDirs = [classesDir];
     }
   }
 
-  // Compile Kotlin via kotlinc (install on demand). SpotBugs analyses the resulting .class files.
-  if (kotlinFiles.length > 0) {
-    const hasKotlinc = await which("kotlinc");
-    if (!hasKotlinc) {
-      core.info("kotlinc not found — installing via sdkman-less direct download…");
-      const kt = await run("bash", [
-        "-lc",
-        [
-          "set -e",
-          "KV=1.9.24",
-          `cd ${workdir}`,
-          'curl -sSL -o kotlin.zip "https://github.com/JetBrains/kotlin/releases/download/v${KV}/kotlin-compiler-${KV}.zip"',
-          "unzip -q kotlin.zip",
-        ].join("\n"),
-      ]);
-      if (kt.exitCode !== 0) {
-        core.warning(`kotlinc install failed (continuing without Kotlin): ${kt.stderr.slice(0, 200)}`);
-        noteParts.push("kotlinc unavailable");
-      }
-    }
-    const kotlincBin = (await which("kotlinc")) ? "kotlinc" : `${workdir}/kotlinc/bin/kotlinc`;
-    if (fs.existsSync(kotlincBin) || (await which("kotlinc"))) {
-      const ktc = await run("bash", [
-        "-lc",
-        `"${kotlincBin}" ${kotlinFiles.map((f) => `"${f}"`).join(" ")} -d ${classesDir} 2>&1 || true`,
-      ]);
-      if (ktc.exitCode !== 0) {
-        core.warning(`kotlinc reported issues (continuing): ${ktc.stderr.slice(0, 200)}`);
-        noteParts.push("kotlinc had errors");
-      }
-    }
-  }
-
-  const compiled = fs.existsSync(classesDir) && fs.readdirSync(classesDir).length > 0;
-  if (!compiled) {
+  if (classDirs.length === 0) {
     return {
       engine: "spotbugs",
       findings: [],
       available: false,
-      note: `compilation produced no .class files${noteParts.length ? " (" + noteParts.join("; ") + ")" : ""}`,
+      note: `no .class files to analyze${noteParts.length ? " (" + noteParts.join("; ") + ")" : ""}`,
     };
   }
 
@@ -160,7 +212,7 @@ export async function runSpotbugs(target: string): Promise<EngineResult> {
 
   const res = await run("bash", [
     "-lc",
-    `"${sbScript}" -textui -xml:withMessages -effort:max -low -output "${xmlOut}" "${classesDir}"`,
+    `"${sbScript}" -textui -xml:withMessages -effort:max -low -output "${xmlOut}" ${classDirs.map((d) => `"${d}"`).join(" ")}`,
   ]);
 
   if (!fs.existsSync(xmlOut)) {
