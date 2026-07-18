@@ -9,7 +9,17 @@
     "test": "node --test dist-test/ || echo 'no tests'",
     "all": "npm run typecheck && npm run build"
   },
-  "keywords": ["sast", "security", "semgrep", "bandit", "eslint", "spotbugs", "sarif", "sbom", "github-action"],
+  "keywords": [
+    "sast",
+    "security",
+    "semgrep",
+    "bandit",
+    "eslint",
+    "spotbugs",
+    "sarif",
+    "sbom",
+    "github-action"
+  ],
   "author": "Stefan Raisl",
   "license": "MIT",
   "dependencies": {
@@ -19,7 +29,7 @@
     "@actions/tool-cache": "^2.0.1"
   },
   "devDependencies": {
-    "@types/node": "^22.9.0",
+    "@types/node": "^24.13.3",
     "@vercel/ncc": "^0.38.3",
     "typescript": "^5.6.3"
   }
