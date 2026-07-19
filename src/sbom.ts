@@ -1,5 +1,7 @@
-// Minimal CycloneDX 1.5 SBOM generator.
-// Detects dependencies from package.json, requirements.txt, and pom.xml.
+// CycloneDX 1.5 SBOM generator.
+// Reads exact dependency versions from lock files when available,
+// falling back to manifest files for projects without lock files.
+// Supported: package-lock.json (v1/v2/v3), Pipfile.lock, requirements.txt, package.json, pom.xml.
 import * as fs from "fs";
 import * as path from "path";
 import * as crypto from "crypto";
@@ -11,7 +13,67 @@ interface Component {
   purl: string;
 }
 
+// npm: prefer package-lock.json (exact transitive deps) over package.json.
 function detectNpm(target: string, comps: Component[]): void {
+  if (detectNpmLock(target, comps)) return;
+  detectNpmManifest(target, comps);
+}
+
+function detectNpmLock(target: string, comps: Component[]): boolean {
+  const lockPath = path.join(target, "package-lock.json");
+  if (!fs.existsSync(lockPath)) return false;
+  try {
+    const lock = JSON.parse(fs.readFileSync(lockPath, "utf-8")) as {
+      lockfileVersion?: number;
+      packages?: Record<string, { version?: string; link?: boolean }>;
+      dependencies?: Record<string, { version?: string; dependencies?: Record<string, unknown> }>;
+    };
+    const seen = new Set<string>();
+    if ((lock.lockfileVersion ?? 1) >= 2 && lock.packages) {
+      // v2/v3: flat packages map, keys like "node_modules/foo" or "node_modules/x/node_modules/foo"
+      for (const [key, pkg] of Object.entries(lock.packages)) {
+        if (!key || pkg.link) continue; // skip root ("") and symlinks
+        const lastIdx = key.lastIndexOf("node_modules/");
+        const name = lastIdx >= 0 ? key.slice(lastIdx + "node_modules/".length) : key;
+        const version = pkg.version ?? "unknown";
+        const id = `${name}@${version}`;
+        if (seen.has(id)) continue;
+        seen.add(id);
+        comps.push({ type: "library", name, version, purl: `pkg:npm/${name}@${version}` });
+      }
+    } else if (lock.dependencies) {
+      // v1: nested dependencies object
+      collectNpmV1Deps(lock.dependencies, comps, seen);
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function collectNpmV1Deps(
+  deps: Record<string, { version?: string; dependencies?: Record<string, unknown> }>,
+  comps: Component[],
+  seen: Set<string>,
+): void {
+  for (const [name, dep] of Object.entries(deps)) {
+    const version = dep.version ?? "unknown";
+    const id = `${name}@${version}`;
+    if (!seen.has(id)) {
+      seen.add(id);
+      comps.push({ type: "library", name, version, purl: `pkg:npm/${name}@${version}` });
+    }
+    if (dep.dependencies) {
+      collectNpmV1Deps(
+        dep.dependencies as Record<string, { version?: string; dependencies?: Record<string, unknown> }>,
+        comps,
+        seen,
+      );
+    }
+  }
+}
+
+function detectNpmManifest(target: string, comps: Component[]): void {
   const pkgPath = path.join(target, "package.json");
   if (!fs.existsSync(pkgPath)) return;
   try {
@@ -31,7 +93,37 @@ function detectNpm(target: string, comps: Component[]): void {
   }
 }
 
+// pip: prefer Pipfile.lock (exact transitive deps) over requirements.txt.
 function detectPip(target: string, comps: Component[]): void {
+  if (detectPipfileLock(target, comps)) return;
+  detectPipRequirements(target, comps);
+}
+
+function detectPipfileLock(target: string, comps: Component[]): boolean {
+  const lockPath = path.join(target, "Pipfile.lock");
+  if (!fs.existsSync(lockPath)) return false;
+  try {
+    const lock = JSON.parse(fs.readFileSync(lockPath, "utf-8")) as Record<
+      string,
+      Record<string, { version?: string }>
+    >;
+    const seen = new Set<string>();
+    for (const section of ["default", "develop"]) {
+      for (const [name, pkg] of Object.entries(lock[section] ?? {})) {
+        const version = (pkg.version ?? "unknown").replace(/^==/, "");
+        const id = `${name}@${version}`;
+        if (seen.has(id)) continue;
+        seen.add(id);
+        comps.push({ type: "library", name, version, purl: `pkg:pypi/${name}@${version}` });
+      }
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function detectPipRequirements(target: string, comps: Component[]): void {
   const reqPath = path.join(target, "requirements.txt");
   if (!fs.existsSync(reqPath)) return;
   const lines = fs.readFileSync(reqPath, "utf-8").split("\n");
