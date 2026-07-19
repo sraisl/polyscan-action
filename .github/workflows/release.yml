@@ -1,0 +1,74 @@
+name: Release (build + tag)
+
+# Manual release: click "Run workflow" on the Actions tab.
+# Builds dist/, commits it, bumps the highest vN tag (v4 -> v5 ...), and pushes the tag.
+# Nothing is released on normal pushes to main.
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Version bump"
+        required: false
+        default: "patch"
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0   # need full history + all tags to compute next version
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "npm"
+
+      - name: Install
+        run: npm ci
+
+      - name: Build dist (ncc)
+        run: npx ncc build src/main.ts -o dist --source-map
+
+      - name: Commit dist (if changed)
+        id: commit
+        run: |
+          git config user.email "stefan@raisl.net"
+          git config user.name "Stefan Raisl"
+          git add dist/index.js dist/index.js.map dist/sourcemap-register.js
+          if git diff --cached --quiet; then
+            echo "dist unchanged"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            git commit -m "build: dist bundle for release"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Compute next version
+        id: version
+        run: |
+          # latest vN tag
+          LATEST=$(git tag --list 'v[0-9]*' | sed 's/^v//' | grep -E '^[0-9]+$' | sort -n | tail -1)
+          LATEST=${LATEST:-0}
+          echo "latest = v${LATEST}"
+          NEXT=$((LATEST + 1))
+          echo "next = v${NEXT}"
+          echo "version=v${NEXT}" >> "$GITHUB_OUTPUT"
+
+      - name: Push main + tag
+        run: |
+          git push origin HEAD
+          git tag -a "${{ steps.version.outputs.version }}" -m "Release ${{ steps.version.outputs.version }}"
+          git push origin "${{ steps.version.outputs.version }}"
