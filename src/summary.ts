@@ -42,6 +42,24 @@ export function renderSummary(
   }
   lines.push("");
 
+  // Secret / leak findings (gitleaks) — shown prominently regardless of the
+  // top-50 cap on the generic findings table, since secrets deserve visibility.
+  const secrets = findings.filter((f) => f.engine === "gitleaks");
+  if (secrets.length > 0) {
+    lines.push("### 🔑 Secrets Detected (gitleaks)");
+    lines.push("");
+    lines.push("| Rule | Location | Severity |");
+    lines.push("|---|---|---|");
+    for (const f of secrets) {
+      const cleanFile = f.file.replace(/^\.\//, "");
+      const loc = f.line > 0 ? `${cleanFile}:${f.line}` : cleanFile;
+      lines.push(`| \`${f.ruleId}\` | \`${loc}\` | ${SEV_EMOJI[f.severity]} ${f.severity} |`);
+    }
+    lines.push("");
+    lines.push("_Secret values are redacted in logs and SARIF._");
+    lines.push("");
+  }
+
   // Findings table (top 50)
   if (findings.length > 0) {
     lines.push("### Findings");
