@@ -30,6 +30,23 @@ async function ensureInstalled(): Promise<boolean> {
   return which("bandit");
 }
 
+export function parseBanditJson(stdout: string): Finding[] {
+  const findings: Finding[] = [];
+  const data = JSON.parse(stdout);
+  for (const r of data.results ?? []) {
+    findings.push({
+      engine: "bandit",
+      ruleId: r.test_id ?? "bandit-rule",
+      severity: mapSeverity(r.issue_severity),
+      message: r.issue_text ?? "Bandit finding",
+      file: r.filename,
+      line: r.line_number ?? 0,
+      cwe: r.issue_cwe?.id ? `CWE-${r.issue_cwe.id}` : undefined,
+    });
+  }
+  return findings;
+}
+
 export async function runBandit(target: string): Promise<EngineResult> {
   const ok = await ensureInstalled();
   if (!ok) {
@@ -43,20 +60,9 @@ export async function runBandit(target: string): Promise<EngineResult> {
     return { engine: "bandit", findings: [], available: true, note: res.stderr.slice(0, 300) };
   }
 
-  const findings: Finding[] = [];
+  let findings: Finding[];
   try {
-    const data = JSON.parse(res.stdout);
-    for (const r of data.results ?? []) {
-      findings.push({
-        engine: "bandit",
-        ruleId: r.test_id ?? "bandit-rule",
-        severity: mapSeverity(r.issue_severity),
-        message: r.issue_text ?? "Bandit finding",
-        file: r.filename,
-        line: r.line_number ?? 0,
-        cwe: r.issue_cwe?.id ? `CWE-${r.issue_cwe.id}` : undefined,
-      });
-    }
+    findings = parseBanditJson(res.stdout);
   } catch (err) {
     return {
       engine: "bandit",

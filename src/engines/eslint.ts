@@ -26,6 +26,26 @@ module.exports = [
 ];
 `;
 
+export function parseEslintJson(stdout: string): Finding[] {
+  const findings: Finding[] = [];
+  const data = JSON.parse(stdout);
+  for (const file of data) {
+    for (const m of file.messages ?? []) {
+      if (!m.ruleId) continue; // parse errors etc.
+      findings.push({
+        engine: "eslint",
+        ruleId: m.ruleId,
+        severity: mapSeverity(m.severity),
+        message: m.message,
+        file: file.filePath,
+        line: m.line ?? 0,
+        column: m.column,
+      });
+    }
+  }
+  return findings;
+}
+
 export async function runEslint(target: string): Promise<EngineResult> {
   const workdir = fs.mkdtempSync(path.join(os.tmpdir(), "polyscan-eslint-"));
   // Install eslint 8 locally (flat-config capable, no plugin resolution headaches).
@@ -61,23 +81,9 @@ export async function runEslint(target: string): Promise<EngineResult> {
     return { engine: "eslint", findings: [], available: true, note: res.stderr.slice(0, 200) };
   }
 
-  const findings: Finding[] = [];
+  let findings: Finding[];
   try {
-    const data = JSON.parse(res.stdout);
-    for (const file of data) {
-      for (const m of file.messages ?? []) {
-        if (!m.ruleId) continue; // parse errors etc.
-        findings.push({
-          engine: "eslint",
-          ruleId: m.ruleId,
-          severity: mapSeverity(m.severity),
-          message: m.message,
-          file: file.filePath,
-          line: m.line ?? 0,
-          column: m.column,
-        });
-      }
-    }
+    findings = parseEslintJson(res.stdout);
   } catch (err) {
     return {
       engine: "eslint",

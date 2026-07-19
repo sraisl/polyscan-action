@@ -238,7 +238,7 @@ export async function runSpotbugs(target: string): Promise<EngineResult> {
 }
 
 // Lightweight XML parse (avoids a heavy XML dependency in the bundle).
-function parseSpotbugsXml(xml: string, javaFiles: string[]): Finding[] {
+export function parseSpotbugsXml(xml: string, javaFiles: string[]): Finding[] {
   const findings: Finding[] = [];
   const bugRe = /<BugInstance\b([^>]*)>([\s\S]*?)<\/BugInstance>/g;
   let m: RegExpExecArray | null;

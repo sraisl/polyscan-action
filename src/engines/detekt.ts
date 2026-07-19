@@ -50,6 +50,33 @@ function findKotlinFiles(dir: string): boolean {
   return walk(dir);
 }
 
+export function parseDetektSarif(sarif: unknown, abs: string): Finding[] {
+  const findings: Finding[] = [];
+  for (const runObj of (sarif as { runs?: unknown[] }).runs ?? []) {
+    for (const r of (runObj as { results?: unknown[] }).results ?? []) {
+      const result = r as {
+        ruleId?: string;
+        level?: string;
+        message?: { text?: string };
+        locations?: { physicalLocation?: { artifactLocation?: { uri?: string }; region?: { startLine?: number } } }[];
+      };
+      const ruleId = result.ruleId ?? "detekt";
+      const loc = result.locations?.[0]?.physicalLocation;
+      const uri = loc?.artifactLocation?.uri ?? "unknown";
+      const line = loc?.region?.startLine ?? 0;
+      findings.push({
+        engine: "detekt",
+        ruleId: String(ruleId).split("/").pop() || "detekt",
+        severity: mapSeverity(result.level ?? "", ruleId),
+        message: result.message?.text ?? ruleId,
+        file: uri.replace(/^file:\/\//, "").replace(abs + "/", ""),
+        line,
+      });
+    }
+  }
+  return findings;
+}
+
 export async function runDetekt(target: string): Promise<EngineResult> {
   const abs = resolveTarget(target);
   if (!findKotlinFiles(abs)) {
@@ -87,28 +114,10 @@ export async function runDetekt(target: string): Promise<EngineResult> {
     return { engine: "detekt", findings: [], available: false, note: `detekt produced no output: ${res.stdout.slice(0, 200)}` };
   }
 
-  const findings: Finding[] = [];
   try {
     const sarif = JSON.parse(fs.readFileSync(sarifOut, "utf-8"));
-    for (const runObj of sarif.runs ?? []) {
-      for (const r of runObj.results ?? []) {
-        const ruleId = r.ruleId ?? "detekt";
-        const loc = r.locations?.[0]?.physicalLocation;
-        const uri = loc?.artifactLocation?.uri ?? "unknown";
-        const line = loc?.region?.startLine ?? 0;
-        findings.push({
-          engine: "detekt",
-          ruleId: String(ruleId).split("/").pop() || "detekt",
-          severity: mapSeverity(r.level, ruleId),
-          message: r.message?.text ?? ruleId,
-          file: uri.replace(/^file:\/\//, "").replace(abs + "/", ""),
-          line,
-        });
-      }
-    }
+    return { engine: "detekt", findings: parseDetektSarif(sarif, abs), available: true };
   } catch (err) {
     return { engine: "detekt", findings: [], available: true, note: `parse error: ${String(err).slice(0, 200)}` };
   }
-
-  return { engine: "detekt", findings, available: true };
 }
