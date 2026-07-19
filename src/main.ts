@@ -11,6 +11,7 @@ import { runEslint } from "./engines/eslint";
 import { runSpotbugs } from "./engines/spotbugs";
 import { runTrivy } from "./engines/trivy";
 import { runDetekt } from "./engines/detekt";
+import { runGitleaks } from "./engines/gitleaks";
 import { evaluateGate } from "./gate";
 import { toSarif } from "./sarif";
 import { toSbom } from "./sbom";
@@ -44,6 +45,8 @@ async function runEngine(name: string, target: string): Promise<EngineResult> {
         return await runTrivy(target);
       case "detekt":
         return await runDetekt(target);
+      case "gitleaks":
+        return await runGitleaks(target);
       default:
         return { engine: name, findings: [], available: false, note: "unknown engine" };
     }
@@ -59,7 +62,7 @@ async function runEngine(name: string, target: string): Promise<EngineResult> {
 
 async function main(): Promise<void> {
   const target = core.getInput("target") || ".";
-  const engines = (core.getInput("engines") || "semgrep,bandit,eslint,spotbugs,trivy,detekt")
+  const engines = (core.getInput("engines") || "semgrep,bandit,eslint,spotbugs,trivy,detekt,gitleaks")
     .split(",")
     .map((e) => e.trim())
     .filter(Boolean);
