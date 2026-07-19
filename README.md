@@ -2,7 +2,7 @@
 
 **Multi-language SAST as a native GitHub Action.** One step runs Semgrep, Bandit, ESLint and SpotBugs, normalizes every result into a single schema, enforces a configurable **Quality Gate**, and emits **SARIF**, a **CycloneDX SBOM** and a rich **job summary** — plus optional artifact upload.
 
-Written in TypeScript, bundled with `@vercel/ncc`, runs on the `node20` runtime. No Docker, no Python wrapper.
+Written in TypeScript, bundled with `@vercel/ncc`, runs as a native GitHub Action on the `node24` runtime.
 
 ## Usage
 
