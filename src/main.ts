@@ -16,7 +16,7 @@ import { evaluateGate } from "./gate";
 import { toSarif } from "./sarif";
 import { toSbom } from "./sbom";
 import { renderSummary } from "./summary";
-import { resolveEngines } from "./engines";
+import { resolveEngines, unknownEngines, ALL_ENGINES } from "./engines";
 
 function boolInput(name: string, def: boolean): boolean {
   const raw = core.getInput(name);
@@ -65,6 +65,12 @@ async function main(): Promise<void> {
   const target = core.getInput("target") || ".";
   const engines = resolveEngines(core.getInput("engines"));
 
+  const unknown = unknownEngines(engines);
+  for (const e of unknown) {
+    core.warning(`Unknown engine "${e}" will be skipped. Valid engines: ${ALL_ENGINES.join(", ")}`);
+  }
+  const validEngines = engines.filter((e) => !unknown.includes(e));
+
   const gateEnforced = boolInput("gate", true);
   const wantSarif = boolInput("sarif", true);
   const wantSbom = boolInput("sbom", false);
@@ -78,11 +84,11 @@ async function main(): Promise<void> {
     maxMedium: intInput("max-medium", 50),
   };
 
-  core.info(`PolyScan scanning "${target}" with engines: ${engines.join(", ")}`);
+  core.info(`PolyScan scanning "${target}" with engines: ${validEngines.join(", ")}`);
 
   // Run engines sequentially (they install tools; parallel would race on pip/npm).
   const engineResults: EngineResult[] = [];
-  for (const e of engines) {
+  for (const e of validEngines) {
     core.startGroup(`Engine: ${e}`);
     const res = await runEngine(e, target);
     core.info(`${e}: ${res.findings.length} findings (available=${res.available})`);

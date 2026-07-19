@@ -5,6 +5,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import * as crypto from "crypto";
+import pkg from "../package.json";
 
 interface Component {
   type: string;
@@ -183,7 +184,7 @@ export function toSbom(target: string): string {
     version: 1,
     metadata: {
       timestamp: new Date().toISOString(),
-      tools: [{ vendor: "Stefan Raisl", name: "PolyScan", version: "1.0.0" }],
+      tools: [{ vendor: "Stefan Raisl", name: "PolyScan", version: pkg.version }],
     },
     components: comps,
   };

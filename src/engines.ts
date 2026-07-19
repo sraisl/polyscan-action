@@ -20,3 +20,7 @@ export function resolveEngines(input: string): string[] {
     .map((e) => e.trim())
     .filter(Boolean);
 }
+
+export function unknownEngines(engines: string[]): string[] {
+  return engines.filter((e) => !(ALL_ENGINES as readonly string[]).includes(e));
+}
