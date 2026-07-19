@@ -55,6 +55,57 @@ async function ensureTrivy(workdir: string): Promise<string | null> {
   return bin;
 }
 
+export function parseTrivyData(data: unknown): Finding[] {
+  const findings: Finding[] = [];
+  for (const result of (data as { Results?: unknown[] }).Results ?? []) {
+    const r = result as {
+      Target?: string;
+      Vulnerabilities?: unknown[];
+      Misconfigurations?: unknown[];
+    };
+    const artifact = r.Target ?? "unknown";
+    for (const v of r.Vulnerabilities ?? []) {
+      const vuln = v as {
+        VulnerabilityID?: string;
+        PkgName?: string;
+        InstalledVersion?: string;
+        FixedVersion?: string;
+        Severity?: string;
+        Title?: string;
+        CweIDs?: string[];
+      };
+      const fixed = vuln.FixedVersion ? ` (fixed in ${vuln.FixedVersion})` : "";
+      findings.push({
+        engine: "trivy",
+        ruleId: vuln.VulnerabilityID ?? "TRIVY-VULN",
+        severity: mapSeverity(vuln.Severity ?? ""),
+        message: `${vuln.PkgName}@${vuln.InstalledVersion}: ${vuln.Title ?? vuln.VulnerabilityID}${fixed}`,
+        file: artifact,
+        line: 0,
+        cwe: Array.isArray(vuln.CweIDs) && vuln.CweIDs.length ? vuln.CweIDs[0] : undefined,
+      });
+    }
+    for (const mc of r.Misconfigurations ?? []) {
+      const m = mc as {
+        ID?: string;
+        Title?: string;
+        Message?: string;
+        Severity?: string;
+        CauseMetadata?: { StartLine?: number };
+      };
+      findings.push({
+        engine: "trivy",
+        ruleId: m.ID ?? "TRIVY-MISCONF",
+        severity: mapSeverity(m.Severity ?? ""),
+        message: `${m.Title ?? m.ID}: ${m.Message ?? ""}`.trim(),
+        file: artifact,
+        line: m.CauseMetadata?.StartLine ?? 0,
+      });
+    }
+  }
+  return findings;
+}
+
 export async function runTrivy(target: string): Promise<EngineResult> {
   const workdir = fs.mkdtempSync(path.join(os.tmpdir(), "polyscan-trivy-"));
   const bin = await ensureTrivy(workdir);
@@ -87,36 +138,9 @@ export async function runTrivy(target: string): Promise<EngineResult> {
     };
   }
 
-  const findings: Finding[] = [];
   try {
     const data = JSON.parse(fs.readFileSync(outFile, "utf-8"));
-    for (const result of data.Results ?? []) {
-      const artifact = result.Target ?? "unknown";
-      // Vulnerabilities (SCA)
-      for (const v of result.Vulnerabilities ?? []) {
-        const fixed = v.FixedVersion ? ` (fixed in ${v.FixedVersion})` : "";
-        findings.push({
-          engine: "trivy",
-          ruleId: v.VulnerabilityID ?? "TRIVY-VULN",
-          severity: mapSeverity(v.Severity),
-          message: `${v.PkgName}@${v.InstalledVersion}: ${v.Title ?? v.VulnerabilityID}${fixed}`,
-          file: artifact,
-          line: 0,
-          cwe: Array.isArray(v.CweIDs) && v.CweIDs.length ? v.CweIDs[0] : undefined,
-        });
-      }
-      // Misconfigurations (IaC)
-      for (const mc of result.Misconfigurations ?? []) {
-        findings.push({
-          engine: "trivy",
-          ruleId: mc.ID ?? "TRIVY-MISCONF",
-          severity: mapSeverity(mc.Severity),
-          message: `${mc.Title ?? mc.ID}: ${mc.Message ?? ""}`.trim(),
-          file: artifact,
-          line: mc.CauseMetadata?.StartLine ?? 0,
-        });
-      }
-    }
+    return { engine: "trivy", findings: parseTrivyData(data), available: true };
   } catch (err) {
     return {
       engine: "trivy",
@@ -125,6 +149,4 @@ export async function runTrivy(target: string): Promise<EngineResult> {
       note: `parse error: ${String(err).slice(0, 200)}`,
     };
   }
-
-  return { engine: "trivy", findings, available: true };
 }

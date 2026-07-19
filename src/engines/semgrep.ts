@@ -30,6 +30,27 @@ async function ensureInstalled(): Promise<boolean> {
   return which("semgrep");
 }
 
+export function parseSemgrepJson(stdout: string): Finding[] {
+  const findings: Finding[] = [];
+  const data = JSON.parse(stdout);
+  for (const r of data.results ?? []) {
+    const meta = r.extra?.metadata ?? {};
+    const cweRaw = meta.cwe;
+    const cwe = Array.isArray(cweRaw) ? cweRaw[0] : cweRaw;
+    findings.push({
+      engine: "semgrep",
+      ruleId: String(r.check_id ?? "semgrep-rule").split(".").pop() || "semgrep-rule",
+      severity: mapSeverity(r.extra?.severity),
+      message: r.extra?.message?.trim() || "Semgrep finding",
+      file: r.path,
+      line: r.start?.line ?? 0,
+      column: r.start?.col,
+      cwe: cwe ? String(cwe).match(/CWE-\d+/)?.[0] : undefined,
+    });
+  }
+  return findings;
+}
+
 export async function runSemgrep(target: string): Promise<EngineResult> {
   const ok = await ensureInstalled();
   if (!ok) {
@@ -54,24 +75,9 @@ export async function runSemgrep(target: string): Promise<EngineResult> {
     };
   }
 
-  const findings: Finding[] = [];
+  let findings: Finding[];
   try {
-    const data = JSON.parse(res.stdout);
-    for (const r of data.results ?? []) {
-      const meta = r.extra?.metadata ?? {};
-      const cweRaw = meta.cwe;
-      const cwe = Array.isArray(cweRaw) ? cweRaw[0] : cweRaw;
-      findings.push({
-        engine: "semgrep",
-        ruleId: String(r.check_id ?? "semgrep-rule").split(".").pop() || "semgrep-rule",
-        severity: mapSeverity(r.extra?.severity),
-        message: r.extra?.message?.trim() || "Semgrep finding",
-        file: r.path,
-        line: r.start?.line ?? 0,
-        column: r.start?.col,
-        cwe: cwe ? String(cwe).match(/CWE-\d+/)?.[0] : undefined,
-      });
-    }
+    findings = parseSemgrepJson(res.stdout);
   } catch (err) {
     return {
       engine: "semgrep",

@@ -29,6 +29,35 @@ function mapSeverity(level: string): Severity {
   }
 }
 
+export function parseGitleaksSarif(sarif: unknown, abs: string): Finding[] {
+  const findings: Finding[] = [];
+  for (const runObj of (sarif as { runs?: unknown[] }).runs ?? []) {
+    for (const r of (runObj as { results?: unknown[] }).results ?? []) {
+      const result = r as {
+        ruleId?: string;
+        level?: string;
+        message?: { text?: string };
+        properties?: { RuleID?: string };
+        locations?: { physicalLocation?: { artifactLocation?: { uri?: string }; region?: { startLine?: number } } }[];
+      };
+      const ruleId = result.ruleId ?? "gitleaks";
+      const loc = result.locations?.[0]?.physicalLocation;
+      const uri = loc?.artifactLocation?.uri ?? "unknown";
+      const line = loc?.region?.startLine ?? 0;
+      const ruleName = result.properties?.RuleID ?? ruleId;
+      findings.push({
+        engine: "gitleaks",
+        ruleId: String(ruleName),
+        severity: mapSeverity(result.level ?? ""),
+        message: result.message?.text ?? ruleName,
+        file: uri.replace(/^file:\/\//, "").replace(abs + "/", ""),
+        line,
+      });
+    }
+  }
+  return findings;
+}
+
 export async function runGitleaks(target: string): Promise<EngineResult> {
   const abs = resolveTarget(target);
   const workdir = fs.mkdtempSync(path.join(os.tmpdir(), "polyscan-gitleaks-"));
@@ -56,32 +85,12 @@ export async function runGitleaks(target: string): Promise<EngineResult> {
     };
   }
 
-  const findings: Finding[] = [];
   try {
     const sarif = JSON.parse(fs.readFileSync(sarifOut, "utf-8"));
-    for (const runObj of sarif.runs ?? []) {
-      for (const r of runObj.results ?? []) {
-        const ruleId = r.ruleId ?? "gitleaks";
-        const loc = r.locations?.[0]?.physicalLocation;
-        const uri = loc?.artifactLocation?.uri ?? "unknown";
-        const line = loc?.region?.startLine ?? 0;
-        // gitleaks puts the rule/description in message + a 'RuleID' property.
-        const ruleName = r.properties?.RuleID ?? ruleId;
-        findings.push({
-          engine: "gitleaks",
-          ruleId: String(ruleName),
-          severity: mapSeverity(r.level),
-          message: r.message?.text ?? ruleName,
-          file: uri.replace(/^file:\/\//, "").replace(abs + "/", ""),
-          line,
-        });
-      }
-    }
+    return { engine: "gitleaks", findings: parseGitleaksSarif(sarif, abs), available: true };
   } catch (err) {
     return { engine: "gitleaks", findings: [], available: true, note: `parse error: ${String(err).slice(0, 200)}` };
   }
-
-  return { engine: "gitleaks", findings, available: true };
 }
 
 async function ensureGitleaks(workdir: string): Promise<string | null> {
