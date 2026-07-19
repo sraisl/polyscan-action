@@ -1,5 +1,6 @@
 // Trivy engine adapter — filesystem scan for vulnerable dependencies and
-// misconfigurations (SCA + IaC). Installs the trivy binary on demand.
+// misconfigurations (SCA + IaC), with optional container image scan.
+// Installs the trivy binary on demand.
 import * as core from "@actions/core";
 import * as fs from "fs";
 import * as os from "os";
@@ -106,47 +107,65 @@ export function parseTrivyData(data: unknown): Finding[] {
   return findings;
 }
 
-export async function runTrivy(target: string): Promise<EngineResult> {
+export async function runTrivy(target: string, image?: string): Promise<EngineResult> {
   const workdir = fs.mkdtempSync(path.join(os.tmpdir(), "polyscan-trivy-"));
   const bin = await ensureTrivy(workdir);
   if (!bin) {
     return { engine: "trivy", findings: [], available: false, note: "trivy not installed" };
   }
 
-  const outFile = path.join(workdir, "trivy.json");
-  // fs scan: vuln (SCA) + misconfig (IaC/Dockerfile/pom etc.).
+  const allFindings: Finding[] = [];
+  const notes: string[] = [];
+
+  // Filesystem scan: vuln (SCA) + misconfig (IaC/Dockerfile/pom etc.).
   // --offline-scan avoids resolving parent POMs over the network (Maven Central rate limits).
-  const res = await run(bin, [
+  const fsOut = path.join(workdir, "trivy-fs.json");
+  const fsRes = await run(bin, [
     "fs",
-    "--scanners",
-    "vuln,misconfig",
+    "--scanners", "vuln,misconfig",
     "--offline-scan",
-    "--format",
-    "json",
-    "--output",
-    outFile,
+    "--format", "json",
+    "--output", fsOut,
     "--quiet",
     resolveTarget(target),
   ]);
-
-  if (!fs.existsSync(outFile)) {
-    return {
-      engine: "trivy",
-      findings: [],
-      available: false,
-      note: `trivy run produced no output: ${res.stdout.slice(0, 200)}`,
-    };
+  if (fs.existsSync(fsOut)) {
+    try {
+      allFindings.push(...parseTrivyData(JSON.parse(fs.readFileSync(fsOut, "utf-8"))));
+    } catch (err) {
+      notes.push(`fs parse error: ${String(err).slice(0, 150)}`);
+    }
+  } else {
+    notes.push(`fs scan produced no output: ${fsRes.stdout.slice(0, 150)}`);
   }
 
-  try {
-    const data = JSON.parse(fs.readFileSync(outFile, "utf-8"));
-    return { engine: "trivy", findings: parseTrivyData(data), available: true };
-  } catch (err) {
-    return {
-      engine: "trivy",
-      findings: [],
-      available: true,
-      note: `parse error: ${String(err).slice(0, 200)}`,
-    };
+  // Image scan (only when an image name is provided).
+  if (image) {
+    core.info(`trivy: scanning image "${image}"…`);
+    const imgOut = path.join(workdir, "trivy-image.json");
+    const imgRes = await run(bin, [
+      "image",
+      "--scanners", "vuln",
+      "--format", "json",
+      "--output", imgOut,
+      "--quiet",
+      image,
+    ]);
+    if (fs.existsSync(imgOut)) {
+      try {
+        allFindings.push(...parseTrivyData(JSON.parse(fs.readFileSync(imgOut, "utf-8"))));
+      } catch (err) {
+        notes.push(`image parse error: ${String(err).slice(0, 150)}`);
+      }
+    } else {
+      notes.push(`image scan produced no output: ${imgRes.stdout.slice(0, 150)}`);
+    }
   }
+
+  return {
+    engine: "trivy",
+    findings: allFindings,
+    available: true,
+    note: notes.length ? notes.join("; ") : undefined,
+  };
 }

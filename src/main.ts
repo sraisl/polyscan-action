@@ -31,7 +31,7 @@ function intInput(name: string, def: number): number {
   return Number.isNaN(n) ? def : n;
 }
 
-async function runEngine(name: string, target: string): Promise<EngineResult> {
+async function runEngine(name: string, target: string, trivyImage?: string): Promise<EngineResult> {
   try {
     switch (name) {
       case "semgrep":
@@ -43,7 +43,7 @@ async function runEngine(name: string, target: string): Promise<EngineResult> {
       case "spotbugs":
         return await runSpotbugs(target);
       case "trivy":
-        return await runTrivy(target);
+        return await runTrivy(target, trivyImage);
       case "detekt":
         return await runDetekt(target);
       case "gitleaks":
@@ -77,6 +77,7 @@ async function main(): Promise<void> {
   const uploadArtifacts = boolInput("upload-artifacts", true);
   const uploadSarif = boolInput("upload-sarif", false);
   const outputDir = core.getInput("output-dir") || ".";
+  const trivyImage = core.getInput("trivy-image") || undefined;
 
   const gateCfg = {
     maxCritical: intInput("max-critical", 0),
@@ -90,7 +91,7 @@ async function main(): Promise<void> {
   const engineResults: EngineResult[] = [];
   for (const e of validEngines) {
     core.startGroup(`Engine: ${e}`);
-    const res = await runEngine(e, target);
+    const res = await runEngine(e, target, trivyImage);
     core.info(`${e}: ${res.findings.length} findings (available=${res.available})`);
     if (res.note) core.info(`note: ${res.note}`);
     core.endGroup();

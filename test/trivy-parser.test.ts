@@ -105,3 +105,30 @@ test("parseTrivyData: empty Results array returns empty array", () => {
 test("parseTrivyData: missing Results key returns empty array", () => {
   assert.deepEqual(parseTrivyData({}), []);
 });
+
+test("parseTrivyData: image scan output (multiple OS layers) all parsed", () => {
+  const data = {
+    Results: [
+      {
+        Target: "myapp:latest (ubuntu 22.04)",
+        Vulnerabilities: [
+          { ...BASE_VULN, VulnerabilityID: "CVE-2023-0001", Severity: "CRITICAL", PkgName: "openssl", InstalledVersion: "3.0.2", FixedVersion: "3.0.8" },
+        ],
+      },
+      {
+        Target: "myapp:latest",
+        Vulnerabilities: [
+          { ...BASE_VULN, VulnerabilityID: "CVE-2023-0002", Severity: "HIGH", PkgName: "libc6", InstalledVersion: "2.35", FixedVersion: undefined },
+        ],
+      },
+    ],
+  };
+  const findings = parseTrivyData(data);
+  assert.equal(findings.length, 2);
+  assert.equal(findings[0].severity, "critical");
+  assert.equal(findings[0].file, "myapp:latest (ubuntu 22.04)");
+  assert.equal(findings[1].severity, "high");
+  assert.equal(findings[1].file, "myapp:latest");
+  assert.ok(findings[0].message.includes("fixed in 3.0.8"));
+  assert.ok(!findings[1].message.includes("fixed in"));
+});

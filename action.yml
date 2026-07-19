@@ -46,6 +46,10 @@ inputs:
     description: "Emit a hint for uploading SARIF to GitHub code scanning (needs a follow-up upload-sarif step)"
     required: false
     default: "false"
+  trivy-image:
+    description: "Docker image to scan with 'trivy image' (e.g. myapp:latest). Requires the image to be available in the local Docker daemon. Runs in addition to the filesystem scan."
+    required: false
+    default: ""
   output-dir:
     description: "Directory for generated reports"
     required: false
