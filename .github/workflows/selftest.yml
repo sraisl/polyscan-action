@@ -20,7 +20,7 @@ jobs:
         uses: ./
         with:
           target: "test-fixtures"
-          engines: "semgrep,bandit,eslint,spotbugs"
+          engines: "semgrep,bandit,eslint,spotbugs,gitleaks"
           gate: "false"          # fixtures are intentionally vulnerable
           sarif: "true"
           sbom: "true"

@@ -11,9 +11,9 @@ inputs:
     required: false
     default: "."
   engines:
-    description: "Comma-separated engines to run: semgrep,bandit,eslint,spotbugs,trivy,detekt (default: all)"
+    description: "Comma-separated engines to run: semgrep,bandit,eslint,spotbugs,trivy,detekt,gitleaks (default: all)"
     required: false
-    default: "semgrep,bandit,eslint,spotbugs,trivy,detekt"
+    default: "semgrep,bandit,eslint,spotbugs,trivy,detekt,gitleaks"
   max-critical:
     description: "Max critical findings allowed before the Quality Gate fails"
     required: false

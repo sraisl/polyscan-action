@@ -1,6 +1,6 @@
 # PolyScan Action
 
-**Multi-language SAST as a native GitHub Action.** One step runs all configured security engines — Semgrep, Bandit, ESLint, SpotBugs, detekt and Trivy — normalizes every result into a single schema, enforces a configurable **Quality Gate**, and emits **SARIF**, a **CycloneDX SBOM** and a rich **job summary** — plus optional artifact upload.
+**Multi-language SAST as a native GitHub Action.** One step runs all configured security engines — Semgrep, Bandit, ESLint, SpotBugs, detekt, Trivy and gitleaks — normalizes every result into a single schema, enforces a configurable **Quality Gate**, and emits **SARIF**, a **CycloneDX SBOM** and a rich **job summary** — plus optional artifact upload.
 
 Written in TypeScript, bundled with `@vercel/ncc`, runs as a native GitHub Action on the `node24` runtime.
 
@@ -75,6 +75,7 @@ jobs:
 | **SpotBugs + FindSecBugs** | Java + Kotlin | **build-aware**: runs `mvn compile` / `gradle classes` when a build file is present (full dependency classpath), else falls back to direct `javac`/`kotlinc` |
 | **Trivy** | deps + IaC | SCA (vulnerable dependencies / CVEs) + misconfig; binary downloaded on demand |
 | **detekt** | Kotlin | Kotlin-native static analysis (incl. security rules) via detekt CLI; SARIF parsed |
+| **gitleaks** | git history + working tree | Secret / credential detection (API keys, tokens, passwords) via gitleaks CLI; SARIF parsed |
 
 Python engines are auto-installed via `pip`; SpotBugs, Trivy and detekt are downloaded on demand. SpotBugs is **build-aware** — for real Java/Kotlin projects it invokes the project's own build (Maven/Gradle) so the full dependency classpath is available, which is required to detect data-flow bugs (SQLi, command injection) on **Java** (FindSecBugs does not target Kotlin bytecode). For **Kotlin** code-security use **detekt**, which analyzes Kotlin source natively. Trivy runs `--offline-scan` to avoid Maven Central rate limits.
 
