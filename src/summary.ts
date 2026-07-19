@@ -60,6 +60,21 @@ export function renderSummary(
     lines.push("");
   }
 
+  // Container image findings (trivy image scan) — shown in a dedicated block.
+  const imageFindings = findings.filter((f) => f.source?.startsWith("image:"));
+  if (imageFindings.length > 0) {
+    const imageName = imageFindings[0].source!.slice("image:".length);
+    lines.push(`### 🐳 Container Image Scan (\`${imageName}\`)`);
+    lines.push("");
+    lines.push("| Sev | CVE / Rule | Finding | Layer |");
+    lines.push("|---|---|---|---|");
+    for (const f of imageFindings) {
+      const cwe = f.cwe ? ` (${f.cwe})` : "";
+      lines.push(`| ${SEV_EMOJI[f.severity]} ${f.severity} | \`${f.ruleId}\`${cwe} | ${f.message} | ${f.file} |`);
+    }
+    lines.push("");
+  }
+
   // Findings table (top 50)
   if (findings.length > 0) {
     lines.push("### Findings");
