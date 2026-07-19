@@ -33,7 +33,9 @@ export async function runGitleaks(target: string): Promise<EngineResult> {
   // Scan full git history + uncommitted; --no-banner; redact to avoid leaking the secret into logs.
   const res = await run("bash", [
     "-lc",
-    `"${bin}" detect --source "${abs}" --report-format sarif --report-path "${sarifOut}" --no-banner --redact --exit-code 0 2>&1 || true`,
+    // gitleaks scans the git repo rooted at the current directory; cd into the
+    // target so the correct repository's history/working tree is scanned.
+    `cd "${abs}" && "${bin}" detect --report-format sarif --report-path "${sarifOut}" --no-banner --redact 2>&1 || true`,
   ]);
 
   if (!fs.existsSync(sarifOut)) {
