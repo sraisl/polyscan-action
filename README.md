@@ -44,7 +44,7 @@ jobs:
 | Input | Default | Description |
 |---|---|---|
 | `target` | `.` | Path to scan |
-| `engines` | `semgrep,bandit,eslint,spotbugs,trivy,detekt,gitleaks` | Comma-separated engines to run |
+| `engines` | `all` | `all` or comma-separated engines: `semgrep,bandit,eslint,spotbugs,trivy,detekt,gitleaks` |
 | `max-critical` | `0` | Max critical findings before the gate fails |
 | `max-high` | `0` | Max high findings before the gate fails |
 | `max-medium` | `50` | Max medium findings before the gate fails |
@@ -79,7 +79,7 @@ jobs:
 
 Python engines are auto-installed via `pip`; SpotBugs, Trivy and detekt are downloaded on demand. SpotBugs is **build-aware** — for real Java/Kotlin projects it invokes the project's own build (Maven/Gradle) so the full dependency classpath is available, which is required to detect data-flow bugs (SQLi, command injection) on **Java** (FindSecBugs does not target Kotlin bytecode). For **Kotlin** code-security use **detekt**, which analyzes Kotlin source natively. Trivy runs `--offline-scan` to avoid Maven Central rate limits.
 
-**Default: all engines run** (`semgrep,bandit,eslint,spotbugs,trivy,detekt`). Restrict via the `engines` input, e.g. `engines: "spotbugs,trivy,detekt"`.
+**Default: all engines run** (`engines: "all"` expands to `semgrep,bandit,eslint,spotbugs,trivy,detekt,gitleaks`). Restrict via the `engines` input, e.g. `engines: "spotbugs,trivy,detekt"`.
 
 ## Development
 
