@@ -8,6 +8,16 @@ import * as tc from "@actions/tool-cache";
 import { Finding, EngineResult, Severity } from "../schema";
 import { run, which } from "../exec";
 
+// Resolve the target path relative to the GitHub workspace (if set),
+// not the action's own directory — otherwise '.' resolves to the wrong place.
+function resolveTarget(target: string): string {
+  const ws = process.env.GITHUB_WORKSPACE;
+  if (ws && !path.isAbsolute(target)) {
+    return path.resolve(ws, target);
+  }
+  return path.resolve(target);
+}
+
 const SPOTBUGS_VERSION = "4.8.6";
 const SPOTBUGS_URL = `https://github.com/spotbugs/spotbugs/releases/download/${SPOTBUGS_VERSION}/spotbugs-${SPOTBUGS_VERSION}.tgz`;
 const FINDSECBUGS_VERSION = "1.13.0";
@@ -110,7 +120,7 @@ async function tryProjectBuild(
 }
 
 export async function runSpotbugs(target: string): Promise<EngineResult> {
-  const abs = path.resolve(target);
+  const abs = resolveTarget(target);
   const javaFiles = findJavaFiles(abs);
   const kotlinFiles = findKotlinFiles(abs);
   const allSources = [...javaFiles, ...kotlinFiles];

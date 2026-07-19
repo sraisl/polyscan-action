@@ -7,6 +7,16 @@ import * as path from "path";
 import { Finding, EngineResult, Severity } from "../schema";
 import { run, which } from "../exec";
 
+// Resolve the target path relative to the GitHub workspace (if set),
+// not the action's own directory — otherwise '.' resolves to the wrong place.
+function resolveTarget(target: string): string {
+  const ws = process.env.GITHUB_WORKSPACE;
+  if (ws && !path.isAbsolute(target)) {
+    return path.resolve(ws, target);
+  }
+  return path.resolve(target);
+}
+
 const DETEKT_VERSION = "1.23.7";
 const DETEKT_URL = `https://github.com/detekt/detekt/releases/download/v${DETEKT_VERSION}/detekt-cli-${DETEKT_VERSION}-all.jar`;
 
@@ -41,7 +51,7 @@ function findKotlinFiles(dir: string): boolean {
 }
 
 export async function runDetekt(target: string): Promise<EngineResult> {
-  const abs = path.resolve(target);
+  const abs = resolveTarget(target);
   if (!findKotlinFiles(abs)) {
     return { engine: "detekt", findings: [], available: true, note: "no .kt files found" };
   }

@@ -7,6 +7,16 @@ import * as path from "path";
 import { Finding, EngineResult, Severity } from "../schema";
 import { run, which } from "../exec";
 
+// Resolve the target path relative to the GitHub workspace (if set),
+// not the action's own directory — otherwise '.' resolves to the wrong place.
+function resolveTarget(target: string): string {
+  const ws = process.env.GITHUB_WORKSPACE;
+  if (ws && !path.isAbsolute(target)) {
+    return path.resolve(ws, target);
+  }
+  return path.resolve(target);
+}
+
 const TRIVY_VERSION = "0.72.0";
 
 function mapSeverity(s: string): Severity {
@@ -57,7 +67,7 @@ export async function runTrivy(target: string): Promise<EngineResult> {
   // --offline-scan avoids resolving parent POMs over the network (Maven Central rate limits).
   const res = await run("bash", [
     "-lc",
-    `"${bin}" fs --scanners vuln,misconfig --offline-scan --format json --output "${outFile}" --quiet "${path.resolve(target)}" 2>&1 || true`,
+    `"${bin}" fs --scanners vuln,misconfig --offline-scan --format json --output "${outFile}" --quiet "${resolveTarget(target)}" 2>&1 || true`,
   ]);
 
   if (!fs.existsSync(outFile)) {
