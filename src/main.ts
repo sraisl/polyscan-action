@@ -2,6 +2,7 @@
 import * as core from "@actions/core";
 import * as fs from "fs";
 import * as path from "path";
+import { DefaultArtifactClient } from "@actions/artifact";
 
 import { Finding, EngineResult, countBySeverity } from "./schema";
 import { runSemgrep } from "./engines/semgrep";
@@ -138,7 +139,6 @@ async function main(): Promise<void> {
   // Upload artifacts
   if (uploadArtifacts && artifactFiles.length > 0) {
     try {
-      const { DefaultArtifactClient } = await import("@actions/artifact");
       const client = new DefaultArtifactClient();
       await client.uploadArtifact("polyscan-reports", artifactFiles, outputDir, {
         retentionDays: 30,
