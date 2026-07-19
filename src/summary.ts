@@ -56,7 +56,7 @@ export function renderSummary(
       lines.push(`| \`${f.ruleId}\` | \`${loc}\` | ${SEV_EMOJI[f.severity]} ${f.severity} |`);
     }
     lines.push("");
-    lines.push("_Secret values are redacted in logs and SARIF._");
+    lines.push("_gitleaks is run with `--redact`: secret values are masked by gitleaks at source and do not appear in logs or SARIF._");
     lines.push("");
   }
 

@@ -67,7 +67,9 @@ export async function runGitleaks(target: string): Promise<EngineResult> {
   }
 
   const sarifOut = path.join(workdir, "gitleaks.sarif");
-  // Scan full git history + uncommitted; --no-banner; redact to avoid leaking the secret into logs.
+  // Scan full git history + uncommitted; --no-banner.
+  // --redact makes gitleaks mask the actual secret value in its own SARIF output before
+  // PolyScan reads it, so no plaintext secrets ever enter PolyScan's logs or reports.
   // gitleaks scans the git repo rooted at the current directory, so run it
   // with the target as cwd.
   const res = await run(
