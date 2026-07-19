@@ -6,16 +6,6 @@ name: Release (build + tag)
 
 on:
   workflow_dispatch:
-    inputs:
-      bump:
-        description: "Version bump"
-        required: false
-        default: "patch"
-        type: choice
-        options:
-          - patch
-          - minor
-          - major
 
 permissions:
   contents: write
@@ -31,7 +21,7 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: "24"
           cache: "npm"
@@ -39,15 +29,24 @@ jobs:
       - name: Install
         run: npm ci
 
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Audit
+        run: npm audit --audit-level=moderate
+
       - name: Build dist (ncc)
-        run: npx ncc build src/main.ts -o dist --source-map
+        run: npm run build
 
       - name: Commit dist (if changed)
         id: commit
         run: |
           git config user.email "stefan@raisl.net"
           git config user.name "Stefan Raisl"
-          git add dist/index.js dist/index.js.map dist/sourcemap-register.js
+          git add dist/
           if git diff --cached --quiet; then
             echo "dist unchanged"
             echo "changed=false" >> "$GITHUB_OUTPUT"
@@ -69,6 +68,5 @@ jobs:
 
       - name: Push main + tag
         run: |
-          git push origin HEAD
           git tag -a "${{ steps.version.outputs.version }}" -m "Release ${{ steps.version.outputs.version }}"
-          git push origin "${{ steps.version.outputs.version }}"
+          git push --atomic origin HEAD "${{ steps.version.outputs.version }}"
