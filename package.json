@@ -1,12 +1,13 @@
 {
   "name": "polyscan-action",
   "version": "1.0.0",
-  "description": "Multi-language SAST orchestrator as a native TypeScript GitHub Action (Semgrep, Bandit, ESLint, SpotBugs) with Quality Gate, SARIF + CycloneDX SBOM and job summary",
+  "description": "Multi-language SAST orchestrator as a native TypeScript GitHub Action with Quality Gate, SARIF, CycloneDX SBOM and job summary",
   "main": "dist/index.js",
   "scripts": {
     "build": "ncc build src/main.ts -o dist --source-map --license licenses.txt",
+    "build:test": "tsc -p tsconfig.test.json",
     "typecheck": "tsc --noEmit",
-    "test": "node --test dist-test/ || echo 'no tests'",
+    "test": "npm run build:test && node --test \"dist-test/test/**/*.js\"",
     "all": "npm run typecheck && npm run build"
   },
   "keywords": [
@@ -23,14 +24,17 @@
   "author": "Stefan Raisl",
   "license": "MIT",
   "dependencies": {
-    "@actions/artifact": "^2.1.11",
+    "@actions/artifact": "^5.0.3",
     "@actions/core": "^1.11.1",
     "@actions/exec": "^1.1.1",
-    "@actions/tool-cache": "^2.0.1"
+    "@actions/tool-cache": "^2.0.2"
   },
   "devDependencies": {
     "@types/node": "^24.13.3",
     "@vercel/ncc": "^0.38.3",
     "typescript": "^5.6.3"
+  },
+  "overrides": {
+    "undici": "^6.27.0"
   }
 }

@@ -15,12 +15,14 @@ jobs:
           node-version: "24"
       - run: npm ci
       - run: npm run typecheck
+      - run: npm test
+      - run: npm audit --audit-level=moderate
       - name: Verify bundled entrypoint is up to date
         run: |
           npm run build
-          # Only the executable bundle must match; source maps are not deterministic.
-          if [ -n "$(git status --porcelain dist/index.js)" ]; then
-            echo "::error::dist/index.js is out of date — run 'npm run build' and commit."
-            git diff --stat dist/index.js
+          # Runtime bundle files must match; source maps are not deterministic.
+          if [ -n "$(git status --porcelain dist | grep -v '\.map$')" ]; then
+            echo "::error::dist runtime files are out of date — run 'npm run build' and commit."
+            git diff --stat dist
             exit 1
           fi

@@ -72,9 +72,15 @@ export async function runDetekt(target: string): Promise<EngineResult> {
 
   const sarifOut = path.join(workdir, "detekt.sarif");
   // --build-upon-default-config keeps the default ruleset; --all-rules enables extra (incl. security-adjacent) rules.
-  const res = await run("bash", [
-    "-lc",
-    `java -jar "${jar}" --input "${abs}" --report sarif:"${sarifOut}" --build-upon-default-config --all-rules 2>&1 || true`,
+  const res = await run("java", [
+    "-jar",
+    jar,
+    "--input",
+    abs,
+    "--report",
+    `sarif:${sarifOut}`,
+    "--build-upon-default-config",
+    "--all-rules",
   ]);
 
   if (!fs.existsSync(sarifOut)) {

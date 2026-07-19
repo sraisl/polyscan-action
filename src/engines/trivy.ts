@@ -65,9 +65,17 @@ export async function runTrivy(target: string): Promise<EngineResult> {
   const outFile = path.join(workdir, "trivy.json");
   // fs scan: vuln (SCA) + misconfig (IaC/Dockerfile/pom etc.).
   // --offline-scan avoids resolving parent POMs over the network (Maven Central rate limits).
-  const res = await run("bash", [
-    "-lc",
-    `"${bin}" fs --scanners vuln,misconfig --offline-scan --format json --output "${outFile}" --quiet "${resolveTarget(target)}" 2>&1 || true`,
+  const res = await run(bin, [
+    "fs",
+    "--scanners",
+    "vuln,misconfig",
+    "--offline-scan",
+    "--format",
+    "json",
+    "--output",
+    outFile,
+    "--quiet",
+    resolveTarget(target),
   ]);
 
   if (!fs.existsSync(outFile)) {

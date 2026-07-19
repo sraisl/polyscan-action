@@ -51,11 +51,38 @@ function detectPip(target: string, comps: Component[]): void {
   }
 }
 
+function xmlText(block: string, tag: string): string | undefined {
+  const match = new RegExp(`<${tag}>\\s*([^<]+?)\\s*</${tag}>`).exec(block);
+  return match?.[1]?.trim();
+}
+
+function detectMaven(target: string, comps: Component[]): void {
+  const pomPath = path.join(target, "pom.xml");
+  if (!fs.existsSync(pomPath)) return;
+  const pom = fs.readFileSync(pomPath, "utf-8");
+  const depRe = /<dependency\b[^>]*>([\s\S]*?)<\/dependency>/g;
+  let m: RegExpExecArray | null;
+  while ((m = depRe.exec(pom)) !== null) {
+    const block = m[1];
+    const groupId = xmlText(block, "groupId");
+    const artifactId = xmlText(block, "artifactId");
+    const version = xmlText(block, "version") ?? "unknown";
+    if (!groupId || !artifactId) continue;
+    comps.push({
+      type: "library",
+      name: `${groupId}:${artifactId}`,
+      version,
+      purl: `pkg:maven/${groupId}/${artifactId}@${version}`,
+    });
+  }
+}
+
 export function toSbom(target: string): string {
   const abs = path.resolve(target);
   const comps: Component[] = [];
   detectNpm(abs, comps);
   detectPip(abs, comps);
+  detectMaven(abs, comps);
 
   const bom = {
     bomFormat: "CycloneDX",

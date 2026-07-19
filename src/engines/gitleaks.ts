@@ -9,6 +9,14 @@ import { run, which } from "../exec";
 
 const GITLEAKS_VERSION = "8.21.0";
 
+function resolveTarget(target: string): string {
+  const ws = process.env.GITHUB_WORKSPACE;
+  if (ws && !path.isAbsolute(target)) {
+    return path.resolve(ws, target);
+  }
+  return path.resolve(target);
+}
+
 // gitleaks severities in its SARIF are "Critical"/"High"/"Low"/"Info"; map to ours.
 function mapSeverity(level: string): Severity {
   switch ((level || "").toLowerCase()) {
@@ -22,7 +30,7 @@ function mapSeverity(level: string): Severity {
 }
 
 export async function runGitleaks(target: string): Promise<EngineResult> {
-  const abs = path.resolve(target);
+  const abs = resolveTarget(target);
   const workdir = fs.mkdtempSync(path.join(os.tmpdir(), "polyscan-gitleaks-"));
   const bin = await ensureGitleaks(workdir);
   if (!bin) {
@@ -31,12 +39,13 @@ export async function runGitleaks(target: string): Promise<EngineResult> {
 
   const sarifOut = path.join(workdir, "gitleaks.sarif");
   // Scan full git history + uncommitted; --no-banner; redact to avoid leaking the secret into logs.
-  const res = await run("bash", [
-    "-lc",
-    // gitleaks scans the git repo rooted at the current directory; cd into the
-    // target so the correct repository's history/working tree is scanned.
-    `cd "${abs}" && "${bin}" detect --report-format sarif --report-path "${sarifOut}" --no-banner --redact 2>&1 || true`,
-  ]);
+  // gitleaks scans the git repo rooted at the current directory, so run it
+  // with the target as cwd.
+  const res = await run(
+    bin,
+    ["detect", "--report-format", "sarif", "--report-path", sarifOut, "--no-banner", "--redact"],
+    { cwd: abs },
+  );
 
   if (!fs.existsSync(sarifOut)) {
     return {

@@ -16,6 +16,7 @@ import { evaluateGate } from "./gate";
 import { toSarif } from "./sarif";
 import { toSbom } from "./sbom";
 import { renderSummary } from "./summary";
+import { resolveEngines } from "./engines";
 
 function boolInput(name: string, def: boolean): boolean {
   const raw = core.getInput(name);
@@ -62,10 +63,7 @@ async function runEngine(name: string, target: string): Promise<EngineResult> {
 
 async function main(): Promise<void> {
   const target = core.getInput("target") || ".";
-  const engines = (core.getInput("engines") || "semgrep,bandit,eslint,spotbugs,trivy,detekt,gitleaks")
-    .split(",")
-    .map((e) => e.trim())
-    .filter(Boolean);
+  const engines = resolveEngines(core.getInput("engines"));
 
   const gateEnforced = boolInput("gate", true);
   const wantSarif = boolInput("sarif", true);
