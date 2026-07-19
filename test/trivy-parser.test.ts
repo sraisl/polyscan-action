@@ -132,3 +132,14 @@ test("parseTrivyData: image scan output (multiple OS layers) all parsed", () => 
   assert.ok(findings[0].message.includes("fixed in 3.0.8"));
   assert.ok(!findings[1].message.includes("fixed in"));
 });
+
+test("parseTrivyData: image findings tagged with source when imageRef provided", () => {
+  const data = { Results: [{ Target: "myapp:latest", Vulnerabilities: [BASE_VULN] }] };
+  const [f] = parseTrivyData(data, "myapp:latest");
+  assert.equal(f.source, "image:myapp:latest");
+});
+
+test("parseTrivyData: fs findings have no source tag", () => {
+  const data = { Results: [{ Target: "package-lock.json", Vulnerabilities: [BASE_VULN] }] };
+  assert.equal(parseTrivyData(data)[0].source, undefined);
+});

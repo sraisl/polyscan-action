@@ -56,7 +56,7 @@ async function ensureTrivy(workdir: string): Promise<string | null> {
   return bin;
 }
 
-export function parseTrivyData(data: unknown): Finding[] {
+export function parseTrivyData(data: unknown, imageRef?: string): Finding[] {
   const findings: Finding[] = [];
   for (const result of (data as { Results?: unknown[] }).Results ?? []) {
     const r = result as {
@@ -84,6 +84,7 @@ export function parseTrivyData(data: unknown): Finding[] {
         file: artifact,
         line: 0,
         cwe: Array.isArray(vuln.CweIDs) && vuln.CweIDs.length ? vuln.CweIDs[0] : undefined,
+        source: imageRef ? `image:${imageRef}` : undefined,
       });
     }
     for (const mc of r.Misconfigurations ?? []) {
@@ -101,6 +102,7 @@ export function parseTrivyData(data: unknown): Finding[] {
         message: `${m.Title ?? m.ID}: ${m.Message ?? ""}`.trim(),
         file: artifact,
         line: m.CauseMetadata?.StartLine ?? 0,
+        source: imageRef ? `image:${imageRef}` : undefined,
       });
     }
   }
@@ -153,7 +155,7 @@ export async function runTrivy(target: string, image?: string): Promise<EngineRe
     ]);
     if (fs.existsSync(imgOut)) {
       try {
-        allFindings.push(...parseTrivyData(JSON.parse(fs.readFileSync(imgOut, "utf-8"))));
+        allFindings.push(...parseTrivyData(JSON.parse(fs.readFileSync(imgOut, "utf-8")), image));
       } catch (err) {
         notes.push(`image parse error: ${String(err).slice(0, 150)}`);
       }

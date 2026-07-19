@@ -19,6 +19,7 @@ export interface Finding {
   line: number;
   column?: number;
   cwe?: string; // e.g. "CWE-89"
+  source?: string; // optional sub-source tag, e.g. "image:myapp:latest"
 }
 
 export interface EngineResult {
