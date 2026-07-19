@@ -30,10 +30,13 @@ export async function runEslint(target: string): Promise<EngineResult> {
   const workdir = fs.mkdtempSync(path.join(os.tmpdir(), "polyscan-eslint-"));
   // Install eslint 8 locally (flat-config capable, no plugin resolution headaches).
   core.info("Installing eslint@8 …");
-  const install = await run("bash", [
-    "-lc",
-    `cd ${workdir} && npm init -y >/dev/null 2>&1 && npm install --no-audit --no-fund --silent eslint@8 >/dev/null 2>&1`,
-  ]);
+  const init = await run("npm", ["init", "-y"], { cwd: workdir });
+  const install =
+    init.exitCode === 0
+      ? await run("npm", ["install", "--no-audit", "--no-fund", "--silent", "eslint@8"], {
+          cwd: workdir,
+        })
+      : init;
   if (install.exitCode !== 0) {
     return {
       engine: "eslint",
@@ -47,10 +50,12 @@ export async function runEslint(target: string): Promise<EngineResult> {
   fs.writeFileSync(configPath, FLAT_CONFIG);
 
   const absTarget = path.resolve(target);
-  const res = await run("bash", [
-    "-lc",
-    `cd "${absTarget}" && ESLINT_USE_FLAT_CONFIG=true ${workdir}/node_modules/.bin/eslint --config ${configPath} --no-ignore -f json . || true`,
-  ]);
+  const eslintBin = path.join(workdir, "node_modules", ".bin", "eslint");
+  const res = await run(
+    eslintBin,
+    ["--config", configPath, "--no-ignore", "-f", "json", "."],
+    { cwd: absTarget, env: { ESLINT_USE_FLAT_CONFIG: "true" } },
+  );
 
   if (!res.stdout.trim()) {
     return { engine: "eslint", findings: [], available: true, note: res.stderr.slice(0, 200) };

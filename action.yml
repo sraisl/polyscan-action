@@ -1,5 +1,5 @@
 name: "PolyScan"
-description: "Multi-language SAST scan (Semgrep, Bandit, ESLint, SpotBugs) with Quality Gate, SARIF + CycloneDX SBOM and job summary — native TypeScript action"
+description: "Multi-language SAST scan with Quality Gate, SARIF, CycloneDX SBOM and job summary — native TypeScript action"
 author: "Stefan Raisl"
 branding:
   icon: "shield"
@@ -43,7 +43,7 @@ inputs:
     required: false
     default: "true"
   upload-sarif:
-    description: "Upload SARIF to GitHub code scanning (needs security-events: write)"
+    description: "Emit a hint for uploading SARIF to GitHub code scanning (needs a follow-up upload-sarif step)"
     required: false
     default: "false"
   output-dir:

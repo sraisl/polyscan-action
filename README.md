@@ -44,7 +44,7 @@ jobs:
 | Input | Default | Description |
 |---|---|---|
 | `target` | `.` | Path to scan |
-| `engines` | `semgrep,bandit,eslint` | Comma-separated: `semgrep,bandit,eslint,spotbugs` |
+| `engines` | `semgrep,bandit,eslint,spotbugs,trivy,detekt,gitleaks` | Comma-separated engines to run |
 | `max-critical` | `0` | Max critical findings before the gate fails |
 | `max-high` | `0` | Max high findings before the gate fails |
 | `max-medium` | `50` | Max medium findings before the gate fails |
@@ -52,7 +52,7 @@ jobs:
 | `sarif` | `true` | Write `polyscan.sarif` (SARIF 2.1.0) |
 | `sbom` | `false` | Write `polyscan.sbom.json` (CycloneDX 1.5) |
 | `upload-artifacts` | `true` | Upload SARIF + SBOM + summary as a workflow artifact |
-| `upload-sarif` | `false` | Hint to upload SARIF to code scanning (use the CodeQL step) |
+| `upload-sarif` | `false` | Emit a hint to upload SARIF to code scanning (use the CodeQL step) |
 | `output-dir` | `.` | Directory for generated reports |
 
 ## Outputs
