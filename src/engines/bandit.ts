@@ -1,7 +1,7 @@
 // Bandit engine adapter (Python security linter).
 import * as core from "@actions/core";
 import { Finding, EngineResult, Severity } from "../schema";
-import { run, which } from "../exec";
+import { run, which, ensurePythonTool } from "../exec";
 
 function mapSeverity(s: string): Severity {
   switch ((s || "").toUpperCase()) {
@@ -17,17 +17,7 @@ function mapSeverity(s: string): Severity {
 }
 
 async function ensureInstalled(): Promise<boolean> {
-  if (await which("bandit")) return true;
-  core.info("bandit not found — installing via pip…");
-  const res = await run("bash", [
-    "-lc",
-    "pip install --quiet bandit || pip3 install --quiet bandit",
-  ]);
-  if (res.exitCode !== 0) {
-    core.warning(`bandit install failed: ${res.stderr.slice(0, 300)}`);
-    return false;
-  }
-  return which("bandit");
+  return ensurePythonTool("bandit", "bandit", core);
 }
 
 export function parseBanditJson(stdout: string): Finding[] {

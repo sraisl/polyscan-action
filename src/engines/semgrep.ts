@@ -1,7 +1,7 @@
 // Semgrep engine adapter — installs via pip if missing, runs with auto config.
 import * as core from "@actions/core";
 import { Finding, EngineResult, Severity } from "../schema";
-import { run, which } from "../exec";
+import { run, which, ensurePythonTool } from "../exec";
 
 function mapSeverity(s: string): Severity {
   switch ((s || "").toUpperCase()) {
@@ -17,17 +17,7 @@ function mapSeverity(s: string): Severity {
 }
 
 async function ensureInstalled(): Promise<boolean> {
-  if (await which("semgrep")) return true;
-  core.info("semgrep not found — installing via pip…");
-  const res = await run("bash", [
-    "-lc",
-    "pip install --quiet semgrep || pip3 install --quiet semgrep",
-  ]);
-  if (res.exitCode !== 0) {
-    core.warning(`semgrep install failed: ${res.stderr.slice(0, 300)}`);
-    return false;
-  }
-  return which("semgrep");
+  return ensurePythonTool("semgrep", "semgrep", core);
 }
 
 export function parseSemgrepJson(stdout: string): Finding[] {
