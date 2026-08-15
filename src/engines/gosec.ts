@@ -1,9 +1,9 @@
 // gosec engine adapter for Go security analysis.
-import * as core from "@actions/core";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as tc from "@actions/tool-cache";
+import { getCore } from "../actions-core";
 import { Finding, EngineResult, Severity } from "../schema";
 import { run, which } from "../exec";
 import { resolveTarget } from "../target";
@@ -132,6 +132,7 @@ export function findGoScanRoots(root: string): string[] {
 }
 
 async function ensureGosec(): Promise<string | null> {
+  const core = await getCore();
   if (await which("gosec")) return "gosec";
   core.info(`gosec not found - downloading v${GOSEC.version}...`);
   try {

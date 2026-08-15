@@ -1,5 +1,5 @@
 // Semgrep engine adapter — installs via pip if missing, runs with auto config.
-import * as core from "@actions/core";
+import { getCore } from "../actions-core";
 import { Finding, EngineResult } from "../schema";
 import { run, ensurePythonTool } from "../exec";
 import { resolveTarget } from "../target";
@@ -9,6 +9,7 @@ import { parseSemgrepCompatibleJson } from "./semgrep-json";
 const SEMGREP_VERSION = TOOLS.semgrep.version;
 
 async function ensureInstalled() {
+  const core = await getCore();
   return ensurePythonTool("semgrep", SEMGREP_VERSION, "semgrep", core);
 }
 

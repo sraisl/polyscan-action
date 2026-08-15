@@ -1,11 +1,11 @@
 // Trivy engine adapter — filesystem scan for vulnerable dependencies and
 // misconfigurations (SCA + IaC), with optional container image scan.
 // Installs the trivy binary on demand.
-import * as core from "@actions/core";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as tc from "@actions/tool-cache";
+import { getCore } from "../actions-core";
 import { Finding, EngineResult, Severity } from "../schema";
 import { run, which } from "../exec";
 import { resolveTarget } from "../target";
@@ -32,6 +32,7 @@ function mapSeverity(s: string): Severity {
 }
 
 async function ensureTrivy(): Promise<string | null> {
+  const core = await getCore();
   if (await which("trivy")) return "trivy";
   core.info(`trivy not found — downloading v${TRIVY_VERSION}…`);
   try {
@@ -166,6 +167,7 @@ async function scanTrivy(
 export async function runTrivy(target: string, image?: string): Promise<EngineResult> {
   const workdir = fs.mkdtempSync(path.join(os.tmpdir(), "polyscan-trivy-"));
   try {
+    const core = await getCore();
     const bin = await ensureTrivy();
     if (!bin) {
       return { engine: "trivy", findings: [], status: "failed", note: "trivy not installed" };

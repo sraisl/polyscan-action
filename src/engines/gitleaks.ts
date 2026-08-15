@@ -1,10 +1,10 @@
 // gitleaks engine adapter — secret / credential detection in git history + working tree.
 // Downloads the gitleaks binary on demand and parses its SARIF report.
-import * as core from "@actions/core";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as tc from "@actions/tool-cache";
+import { getCore } from "../actions-core";
 import { Finding, EngineResult, Severity } from "../schema";
 import { run, which } from "../exec";
 import { resolveTarget } from "../target";
@@ -99,6 +99,7 @@ export async function runGitleaks(target: string): Promise<EngineResult> {
 }
 
 async function ensureGitleaks(): Promise<string | null> {
+  const core = await getCore();
   if (await which("gitleaks")) return "gitleaks";
   core.info(`gitleaks not found — downloading v${GITLEAKS_VERSION}…`);
   try {

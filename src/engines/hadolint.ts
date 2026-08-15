@@ -1,8 +1,8 @@
 // hadolint engine adapter — Dockerfile linting (best practices + security-relevant checks).
 // Downloads the pinned standalone binary and parses hadolint's native SARIF output.
-import * as core from "@actions/core";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { getCore } from "../actions-core";
 import { Finding, EngineResult, Severity } from "../schema";
 import { run, which } from "../exec";
 import { resolveTarget } from "../target";
@@ -79,6 +79,7 @@ export function parseHadolintSarif(sarif: unknown, abs: string): Finding[] {
 }
 
 async function ensureHadolint(): Promise<string | null> {
+  const core = await getCore();
   if (await which("hadolint")) return "hadolint";
   core.info(`hadolint not found — downloading v${HADOLINT.version}…`);
   try {

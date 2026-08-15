@@ -1,8 +1,8 @@
 // OpenGrep engine adapter — downloads a pinned standalone binary and parses
 // Semgrep-compatible JSON output.
-import * as core from "@actions/core";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { getCore } from "../actions-core";
 import { EngineResult, Finding } from "../schema";
 import { resolveExecutable, resolvePinnedExecutable, run } from "../exec";
 import { resolveTarget } from "../target";
@@ -17,6 +17,7 @@ export function parseOpengrepJson(stdout: string): Finding[] {
 }
 
 async function ensureOpengrep(): Promise<string | null> {
+  const core = await getCore();
   const existing = resolveExecutable("opengrep");
   if (existing) {
     const pinned = await resolvePinnedExecutable(

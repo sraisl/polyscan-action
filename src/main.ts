@@ -1,9 +1,9 @@
 // PolyScan GitHub Action — entry point.
-import * as core from "@actions/core";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { DefaultArtifactClient } from "@actions/artifact";
 
+import { getCore, type ActionsCore } from "./actions-core";
 import { Finding, EngineResult, countBySeverity } from "./schema";
 import { runSemgrep } from "./engines/semgrep";
 import { runOpengrep } from "./engines/opengrep";
@@ -26,13 +26,13 @@ import { mapConcurrentWithBarriers, parseMaxConcurrency } from "./scheduler";
 
 const DEFAULT_MAX_CONCURRENCY = 2;
 
-function boolInput(name: string, def: boolean): boolean {
+function boolInput(core: ActionsCore, name: string, def: boolean): boolean {
   const raw = core.getInput(name);
   if (raw === "") return def;
   return raw.toLowerCase() === "true";
 }
 
-function intInput(name: string, def: number): number {
+function intInput(core: ActionsCore, name: string, def: number): number {
   const raw = core.getInput(name);
   if (raw === "") return def;
   const n = Number.parseInt(raw, 10);
@@ -59,7 +59,7 @@ interface ActionConfig {
   };
 }
 
-function readConfig(): ActionConfig {
+async function readConfig(core: ActionsCore): Promise<ActionConfig> {
   const engines = resolveEngines(core.getInput("engines"));
   const unknown = unknownEngines(engines);
   if (unknown.length > 0) {
@@ -71,12 +71,12 @@ function readConfig(): ActionConfig {
   return {
     target: resolveTarget(core.getInput("target") || "."),
     engines,
-    gateEnforced: boolInput("gate", true),
-    failOnEngineError: boolInput("fail-on-engine-error", true),
-    wantSarif: boolInput("sarif", true),
-    wantSbom: boolInput("sbom", false),
-    uploadArtifacts: boolInput("upload-artifacts", true),
-    uploadSarif: boolInput("upload-sarif", false),
+    gateEnforced: boolInput(core, "gate", true),
+    failOnEngineError: boolInput(core, "fail-on-engine-error", true),
+    wantSarif: boolInput(core, "sarif", true),
+    wantSbom: boolInput(core, "sbom", false),
+    uploadArtifacts: boolInput(core, "upload-artifacts", true),
+    uploadSarif: boolInput(core, "upload-sarif", false),
     maxConcurrency: parseMaxConcurrency(
       core.getInput("max-concurrency"),
       DEFAULT_MAX_CONCURRENCY,
@@ -86,9 +86,9 @@ function readConfig(): ActionConfig {
     trivyImage: core.getInput("trivy-image") || undefined,
     opengrepConfig: core.getInput("opengrep-config") || "auto",
     gate: {
-      maxCritical: intInput("max-critical", 0),
-      maxHigh: intInput("max-high", 0),
-      maxMedium: intInput("max-medium", 50),
+      maxCritical: intInput(core, "max-critical", 0),
+      maxHigh: intInput(core, "max-high", 0),
+      maxMedium: intInput(core, "max-medium", 50),
     },
   };
 }
@@ -148,7 +148,7 @@ function normalizeEngineFindings(result: EngineResult, target: string): void {
   }
 }
 
-async function runEngines(config: ActionConfig): Promise<EngineResult[]> {
+async function runEngines(core: ActionsCore, config: ActionConfig): Promise<EngineResult[]> {
   core.info(
     `Engine concurrency: ${config.maxConcurrency} (spotbugs runs as a serial barrier)`,
   );
@@ -185,6 +185,7 @@ function sortedFindings(engineResults: EngineResult[]): Finding[] {
 }
 
 function writeReports(
+  core: ActionsCore,
   config: ActionConfig,
   findings: Finding[],
   summary: string,
@@ -213,7 +214,7 @@ function writeReports(
   return { files: artifactFiles, sarifPath };
 }
 
-async function publishSummary(summary: string): Promise<void> {
+async function publishSummary(core: ActionsCore, summary: string): Promise<void> {
   try {
     await core.summary.addRaw(summary).write();
   } catch (err) {
@@ -221,7 +222,7 @@ async function publishSummary(summary: string): Promise<void> {
   }
 }
 
-async function uploadReports(files: string[], outputDir: string): Promise<void> {
+async function uploadReports(core: ActionsCore, files: string[], outputDir: string): Promise<void> {
   try {
     const client = new DefaultArtifactClient();
     await client.uploadArtifact("polyscan-reports", files, outputDir, { retentionDays: 30 });
@@ -232,6 +233,7 @@ async function uploadReports(files: string[], outputDir: string): Promise<void> 
 }
 
 function setOutputs(
+  core: ActionsCore,
   findings: Finding[],
   engineResults: EngineResult[],
   gatePassed: boolean,
@@ -254,6 +256,7 @@ function setOutputs(
 }
 
 function enforceResults(
+  core: ActionsCore,
   failedEngines: EngineResult[],
   failOnEngineError: boolean,
   gateEnforced: boolean,
@@ -280,19 +283,20 @@ function enforceResults(
 
 async function main(): Promise<void> {
   assertSupportedPlatform();
-  const config = readConfig();
+  const core = await getCore();
+  const config = await readConfig(core);
   core.info(`PolyScan scanning "${config.target}" with engines: ${config.engines.join(", ")}`);
 
-  const engineResults = await runEngines(config);
+  const engineResults = await runEngines(core, config);
   const findings = sortedFindings(engineResults);
   const counts = countBySeverity(findings);
   const gate = evaluateGate(findings, config.gate);
   const summary = renderSummary(findings, counts, gate, config.gateEnforced, engineResults);
 
-  await publishSummary(summary);
-  const reports = writeReports(config, findings, summary);
+  await publishSummary(core, summary);
+  const reports = writeReports(core, config, findings, summary);
   if (config.uploadArtifacts && reports.files.length > 0) {
-    await uploadReports(reports.files, config.outputDir);
+    await uploadReports(core, reports.files, config.outputDir);
   }
   if (config.uploadSarif && reports.sarifPath) {
     core.info(
@@ -301,10 +305,11 @@ async function main(): Promise<void> {
     );
   }
 
-  const failedEngines = setOutputs(findings, engineResults, gate.passed);
-  enforceResults(failedEngines, config.failOnEngineError, config.gateEnforced, gate);
+  const failedEngines = setOutputs(core, findings, engineResults, gate.passed);
+  enforceResults(core, failedEngines, config.failOnEngineError, config.gateEnforced, gate);
 }
 
-main().catch((err) => {
+main().catch(async (err) => {
+  const core = await getCore();
   core.setFailed(`PolyScan crashed: ${err instanceof Error ? err.stack : String(err)}`);
 });

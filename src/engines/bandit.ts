@@ -1,5 +1,5 @@
 // Bandit engine adapter (Python security linter).
-import * as core from "@actions/core";
+import { getCore } from "../actions-core";
 import { Finding, EngineResult, Severity } from "../schema";
 import { run, ensurePythonTool } from "../exec";
 import { resolveTarget } from "../target";
@@ -21,6 +21,7 @@ function mapSeverity(s: string): Severity {
 }
 
 async function ensureInstalled() {
+  const core = await getCore();
   return ensurePythonTool("bandit", BANDIT_VERSION, "bandit", core);
 }
 

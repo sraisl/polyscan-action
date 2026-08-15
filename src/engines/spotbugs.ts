@@ -1,10 +1,10 @@
 // SpotBugs + FindSecBugs engine adapter for Java/Kotlin.
 // Compiles .java sources, downloads SpotBugs+FindSecBugs on demand, parses XML.
-import * as core from "@actions/core";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as tc from "@actions/tool-cache";
+import { getCore } from "../actions-core";
 import { Finding, EngineResult, Severity } from "../schema";
 import { run, which } from "../exec";
 import { resolveTarget } from "../target";
@@ -94,6 +94,7 @@ async function tryProjectBuild(
 
 async function tryMavenBuild(abs: string, noteParts: string[]): Promise<string[]> {
   if (!fs.existsSync(path.join(abs, "pom.xml")) || !(await which("mvn"))) return [];
+  const core = await getCore();
   core.info("Detected pom.xml — running 'mvn compile' for a full classpath…");
   const result = await run("mvn", ["-q", "-B", "-DskipTests", "compile"], { cwd: abs });
   if (result.exitCode !== 0) noteParts.push("mvn compile had errors");
@@ -115,6 +116,7 @@ async function tryGradleBuild(abs: string, noteParts: string[]): Promise<string[
   const command = await gradleCommand(abs);
   if (!command) return [];
 
+  const core = await getCore();
   core.info("Detected Gradle build — running 'classes' task for a full classpath…");
   const result = await run(command, ["classes", "--console=plain", "-q"], { cwd: abs });
   if (result.exitCode !== 0) noteParts.push("gradle build had errors");
@@ -137,6 +139,7 @@ async function ensureKotlinc(): Promise<string | null> {
       },
     );
   } catch (err) {
+    const core = await getCore();
     core.warning(`kotlinc download failed: ${String(err).slice(0, 200)}`);
     return null;
   }
@@ -156,6 +159,7 @@ async function ensureSpotbugs(): Promise<string | null> {
       fs.chmodSync(path.join(directory, executable), 0o700);
     });
   } catch (err) {
+    const core = await getCore();
     core.warning(`spotbugs installation failed: ${String(err).slice(0, 200)}`);
     return null;
   }
@@ -193,6 +197,7 @@ async function compileWithoutBuild(
     return [];
   }
 
+  const core = await getCore();
   core.info("No build output found — falling back to direct javac/kotlinc compilation…");
   const classesDir = path.join(workdir, "classes");
   fs.mkdirSync(classesDir, { recursive: true });
