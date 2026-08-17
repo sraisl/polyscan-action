@@ -43,7 +43,7 @@
   "devDependencies": {
     "@types/node": "26.2.0",
     "@vercel/ncc": "0.45.0",
-    "typescript": "5.9.3"
+    "typescript": "7.0.2"
   },
   "overrides": {
     "undici": "^6.28.0",
