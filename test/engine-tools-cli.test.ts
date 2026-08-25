@@ -4,6 +4,8 @@ import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
 
+import { TOOLS } from "../src/tool-versions";
+
 const SCRIPT = path.resolve(__dirname, "../../scripts/engine-tools.mjs");
 
 interface EngineToolModule {
@@ -26,13 +28,10 @@ test("engine tools list prints every locked tool", () => {
   const result = runCli(["list"]);
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /^tool\tprovider\tversion/m);
-  assert.match(result.stdout, /^gosec\tgithub\t2\.28\.0$/m);
-  assert.match(result.stdout, /^hadolint\tgithub\t2\.15\.1$/m);
-  assert.match(result.stdout, /^opengrep\tgithub\t1\.26\.0$/m);
-  assert.match(result.stdout, /^semgrep\tpypi\t1\.170\.0$/m);
-  assert.match(result.stdout, /^trivy\tgithub\t0\.72\.0$/m);
-  assert.match(result.stdout, /^zizmor\tgithub\t1\.29\.0$/m);
-  assert.match(result.stdout, /^trufflehog\tgithub\t3\.97\.0$/m);
+  for (const [name, tool] of Object.entries(TOOLS)) {
+    const escaped = tool.version.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
+    assert.match(result.stdout, new RegExp(`^${name}\t${tool.provider}\t${escaped}$`, "m"));
+  }
 });
 
 test("engine tools list rejects unknown tools", () => {

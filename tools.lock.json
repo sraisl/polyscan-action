@@ -17,15 +17,15 @@
     "eslint": {
       "provider": "npm",
       "package": "eslint",
-      "version": "8.57.1"
+      "version": "10.9.1"
     },
     "findsecbugs": {
       "provider": "maven",
       "group": "com.h3xstream.findsecbugs",
       "artifact": "findsecbugs-plugin",
       "extension": "jar",
-      "version": "1.13.0",
-      "sha256": "c239763a8c327b5fb653a34dece6398578bf435b9a32c212bb8e1abe701368a5"
+      "version": "1.14.0",
+      "sha256": "6fa340344fa433ff46c2985dab1010e8bc739f9395c983594a5240095e92abc8"
     },
     "gitleaks": {
       "provider": "github",
@@ -70,7 +70,7 @@
     "semgrep": {
       "provider": "pypi",
       "package": "semgrep",
-      "version": "1.170.0"
+      "version": "1.174.0"
     },
     "spotbugs": {
       "provider": "github",
