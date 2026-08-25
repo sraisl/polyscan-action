@@ -43,11 +43,21 @@ jobs:
             echo "No engine updates available."
             exit 0
           fi
+          : > engine-applied-updates.txt
           while IFS=$'\t' read -r tool latest; do
             echo "::group::${tool} -> ${latest}"
-            npm run engines:update -- "$tool" "$latest" --skip-project-checks
+            if npm run engines:update -- "$tool" "$latest" --skip-project-checks; then
+              printf '%s\t%s\n' "$tool" "$latest" >> engine-applied-updates.txt
+            else
+              echo "::warning::Skipping ${tool} ${latest}: unable to verify release asset digest"
+            fi
             echo "::endgroup::"
           done < engine-updates.txt
+
+          if [ ! -s engine-applied-updates.txt ]; then
+            echo "No verifiable engine updates could be applied."
+            exit 0
+          fi
 
           npm run typecheck
           npm test
@@ -69,7 +79,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           branch="automation/engine-tools-update"
-          summary=$(awk -F'\t' '{print "- `"$1"` -> `"$2"`"}' engine-updates.txt)
+          summary=$(awk -F'\t' '{print "- `"$1"` -> `"$2"`"}' engine-applied-updates.txt)
 
           git \
             -c user.name="github-actions[bot]" \
