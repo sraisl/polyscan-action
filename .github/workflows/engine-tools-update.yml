@@ -76,7 +76,7 @@ jobs:
       - name: Open pull request
         if: steps.diff.outputs.changed == 'true'
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.WORKFLOW_PAT || github.token }}
         run: |
           branch="automation/engine-tools-update"
           summary=$(awk -F'\t' '{print "- `"$1"` -> `"$2"`"}' engine-applied-updates.txt)
@@ -104,7 +104,8 @@ jobs:
               --title "chore: update scan engine tool versions" \
               --body "$body" \
               --head "$branch" \
-              --base main
+              --base main \
+            || echo "::notice::PR creation requires 'Allow GitHub Actions to create and approve pull requests' in Settings → Actions → General, or a WORKFLOW_PAT secret. Branch '$branch' was pushed — open PR at: https://github.com/$GITHUB_REPOSITORY/compare/main...$branch"
           else
-            gh pr edit "$branch" --body "$body"
+            gh pr edit "$branch" --body "$body" || true
           fi
