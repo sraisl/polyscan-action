@@ -2,7 +2,11 @@
 
 **Multi-language SAST as a native GitHub Action.** One step runs all configured security engines — Semgrep, OpenGrep, Bandit, ESLint, SpotBugs, detekt, gosec, Trivy, gitleaks, hadolint and zizmor — normalizes every result into a single schema, enforces a configurable **Quality Gate**, and emits **SARIF**, a **CycloneDX SBOM** and a rich **job summary** — plus optional artifact upload.
 
-Written in TypeScript, bundled with `@vercel/ncc`, runs as a native GitHub Action on the `node24` runtime. PolyScan supports Linux x64 runners.
+Written in TypeScript, bundled with `@vercel/ncc`, runs as a native GitHub Action on the `node24` runtime.
+
+## Requirements
+
+- **Linux x64 runners only** (GitHub-hosted `ubuntu-latest` or self-hosted) — PolyScan fails fast on other OS/architecture combinations.
 
 ## Usage
 
@@ -20,7 +24,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: sraisl/polyscan-action@v6
+      - uses: sraisl/polyscan-action@v2
         with:
           target: "."
           engines: "semgrep,bandit,eslint,spotbugs"
@@ -124,6 +128,10 @@ npm run build      # bundles src/main.ts -> dist/index.js (must be committed)
 ```
 
 > The `dist/` folder is committed on purpose — GitHub runs the bundled `dist/index.js` directly.
+
+## Versioning
+
+Releases are tagged as semver (`vX.Y.Z`) with a floating major tag (e.g. `v2`) that always points at the latest `v2.x.y` — pin `@v2` for automatic minor/patch updates, or pin an exact `@vX.Y.Z`. Tags `v1` through `v15` predate this scheme (plain incrementing integers, not semver) and are kept as-is for existing consumers; new usage should pin `@v2` or later. See [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 
