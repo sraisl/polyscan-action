@@ -1,13 +1,35 @@
 name: Release (build + tag)
 
 # Manual release: click "Run workflow" on the Actions tab.
-# Builds dist/, then tags the CURRENT remote main with the next vN and pushes ONLY the tag
-# (no main push — main is branch-protected, so we never commit dist to main here).
+# Builds dist/, then tags the CURRENT remote main with the next semver (vX.Y.Z) and moves the
+# floating major tag (vX) to point at it, pushing ONLY tags (no main push — main is
+# branch-protected, so we never commit dist to main here).
 #
-# If you want dist committed to main, open a PR; this workflow only produces a release tag.
+# v1..v15 are legacy tags from before this workflow adopted semver + a floating major tag;
+# they are left untouched. The new scheme starts at v16.0.0 / floating v16 — v1..v15 are ALL
+# already taken as literal legacy tags, so v16 is the first genuinely unused major.
+#
+# If you want dist committed to main, open a PR; this workflow only produces release tags.
 
 on:
   workflow_dispatch:
+    inputs:
+      bump:
+        description: "Version part to bump"
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+
+# Serialize releases: two concurrent dispatches could both compute their next version from the
+# same starting tag, then race to force-move the floating major tag — the one that pushes last
+# wins, which can regress it (e.g. a minor release landing, then a patch release started earlier
+# overwriting v16 back to the older patch). `queue: max` (not just cancel-in-progress: false,
+# which only keeps one run pending and cancels/replaces it on a third dispatch) queues every
+# dispatched release and runs them one at a time.
+concurrency:
+  group: release
+  cancel-in-progress: false
+  queue: max
 
 permissions:
   contents: write
@@ -50,18 +72,34 @@ jobs:
       - name: Compute next version
         id: version
         run: |
-          LATEST=$(git tag --list 'v[0-9]*' | sed 's/^v//' | grep -E '^[0-9]+$' | sort -n | tail -1)
-          LATEST=${LATEST:-0}
+          # grep wrapped with `|| true`: under bash's default -eo pipefail, a zero-match grep
+          # (e.g. bootstrapping before any v16+ semver tag exists) would otherwise abort the
+          # script here instead of falling through to the LATEST fallback below.
+          LATEST=$(git tag --list 'v*' | { grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' || true; } | sed 's/^v//' | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)
+          LATEST=${LATEST:-15.0.0}
           echo "latest = v${LATEST}"
-          NEXT=$((LATEST + 1))
-          echo "next = v${NEXT}"
-          echo "version=v${NEXT}" >> "$GITHUB_OUTPUT"
+          IFS=. read -r MAJOR MINOR PATCH <<< "$LATEST"
+          case "${{ inputs.bump }}" in
+            major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+            minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+            patch) PATCH=$((PATCH + 1)) ;;
+          esac
+          # v1..v15 are already taken by legacy pre-semver tags; start the new scheme at v16.0.0.
+          if [ "$MAJOR" -lt 16 ]; then MAJOR=16; MINOR=0; PATCH=0; fi
+          VERSION="v${MAJOR}.${MINOR}.${PATCH}"
+          echo "next = ${VERSION}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "major=v${MAJOR}" >> "$GITHUB_OUTPUT"
 
-      - name: Tag current main + push tag only
+      - name: Tag current main + move floating major tag, push tags only
         run: |
           git \
             -c user.name="github-actions[bot]" \
             -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
             tag -a "${{ steps.version.outputs.version }}" -m "Release ${{ steps.version.outputs.version }}"
-          # push ONLY the tag, never main (branch protection blocks main pushes)
-          git push origin "${{ steps.version.outputs.version }}"
+          # Peel to ^{commit}: tagging the annotated tag's name directly would create a
+          # tag-of-a-tag (the lightweight tag pointing at the tag object, not the commit).
+          git tag -f "${{ steps.version.outputs.major }}" "${{ steps.version.outputs.version }}^{commit}"
+          # push ONLY tags, never main (branch protection blocks main pushes); atomic so a
+          # partial failure can't publish the version tag while leaving the floating tag stale
+          git push --atomic origin "${{ steps.version.outputs.version }}" "+refs/tags/${{ steps.version.outputs.major }}"

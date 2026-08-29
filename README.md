@@ -2,7 +2,11 @@
 
 **Multi-language SAST as a native GitHub Action.** One step runs all configured security engines — Semgrep, OpenGrep, Bandit, ESLint, SpotBugs, detekt, gosec, Trivy, gitleaks, hadolint and zizmor — normalizes every result into a single schema, enforces a configurable **Quality Gate**, and emits **SARIF**, a **CycloneDX SBOM** and a rich **job summary** — plus optional artifact upload.
 
-Written in TypeScript, bundled with `@vercel/ncc`, runs as a native GitHub Action on the `node24` runtime. PolyScan supports Linux x64 runners.
+Written in TypeScript, bundled with `@vercel/ncc`, runs as a native GitHub Action on the `node24` runtime.
+
+## Requirements
+
+- **Linux x64 runners only** (GitHub-hosted `ubuntu-latest` or self-hosted) — PolyScan fails fast on other OS/architecture combinations.
 
 ## Usage
 
@@ -20,7 +24,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: sraisl/polyscan-action@v6
+      - uses: sraisl/polyscan-action@v16
         with:
           target: "."
           engines: "semgrep,bandit,eslint,spotbugs"
@@ -124,6 +128,41 @@ npm run build      # bundles src/main.ts -> dist/index.js (must be committed)
 ```
 
 > The `dist/` folder is committed on purpose — GitHub runs the bundled `dist/index.js` directly.
+
+## Third-party tools & licenses
+
+PolyScan itself is MIT-licensed, and its bundled `dist/index.js` only pulls in permissively
+licensed npm dependencies — see the full, generated inventory in `dist/licenses.txt` (currently
+MIT, Apache-2.0, ISC, BSD-3-Clause, BlueOak-1.0.0, 0BSD, and CC0; that file, not this README, is
+the authoritative list). The scan engines below are **not** bundled or vendored: PolyScan installs
+each one from its official distribution channel at scan time and invokes it as a separate
+subprocess — PolyScan never links against or redistributes their code. Binary/archive downloads
+(detekt, gitleaks, gosec, hadolint, the Kotlin compiler, opengrep, SpotBugs/FindSecBugs, Trivy,
+trufflehog, zizmor) are SHA-256-verified against `tools.lock.json`; Semgrep and Bandit are
+installed via `pip install <tool>==<version>` and ESLint via `npm install eslint@<version>`,
+pinned to an exact version but relying on PyPI/npm registry integrity rather than PolyScan's own
+checksum verification.
+
+| Engine | License |
+|---|---|
+| ESLint, gitleaks, zizmor | MIT |
+| Bandit, gosec, detekt, Kotlin compiler, Trivy | Apache-2.0 |
+| Semgrep, OpenGrep, SpotBugs | LGPL-2.1 |
+| FindSecBugs | LGPL-3.0 |
+| hadolint | GPL-3.0 |
+| trufflehog | AGPL-3.0 (opt-in only) |
+
+**Semgrep's default rules — read this if you use PolyScan commercially.** Semgrep is scanned
+with `--config auto`, which pulls Semgrep's own registry rules. Since late 2024 those rules are
+licensed under the [Semgrep Rules License v1.0](https://semgrep.dev/legal/rules-license/), which
+restricts use to internal, non-SaaS, non-competing contexts — the Semgrep *engine* stays LGPL-2.1,
+but its *default ruleset* does not. If you run PolyScan as part of a commercial SaaS offering or a
+product that competes with Semgrep, select `opengrep` instead (`engines: "opengrep,..."`), which
+maintains its own unrestricted rule set for exactly this reason.
+
+## Versioning
+
+Releases are tagged as semver (`vX.Y.Z`) with a floating major tag (e.g. `v16`) that always points at the latest `v16.x.y` — pin `@v16` for automatic minor/patch updates, or pin an exact `@vX.Y.Z`. Tags `v1` through `v15` predate this scheme (plain incrementing integers, not semver) and are kept as-is for existing consumers; the new scheme starts at `v16` precisely to avoid colliding with any of them. New usage should pin `@v16` or later. See [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 
