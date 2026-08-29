@@ -24,7 +24,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: sraisl/polyscan-action@v2
+      - uses: sraisl/polyscan-action@v16
         with:
           target: "."
           engines: "semgrep,bandit,eslint,spotbugs"
@@ -133,9 +133,13 @@ npm run build      # bundles src/main.ts -> dist/index.js (must be committed)
 
 PolyScan itself is MIT-licensed, and its bundled `dist/index.js` only pulls in permissively
 licensed npm dependencies (MIT / Apache-2.0 / ISC — see `dist/licenses.txt`). The scan engines
-below are **not** bundled or vendored: PolyScan downloads each one from its official distribution
-channel (PyPI, npm, Maven Central, or GitHub Releases) at scan time, verifies it via SHA-256, and
-invokes it as a separate subprocess — PolyScan never links against or redistributes their code.
+below are **not** bundled or vendored: PolyScan installs each one from its official distribution
+channel at scan time and invokes it as a separate subprocess — PolyScan never links against or
+redistributes their code. Binary/archive downloads (detekt, gitleaks, gosec, hadolint, opengrep,
+SpotBugs/FindSecBugs, Trivy, trufflehog, zizmor) are SHA-256-verified against `tools.lock.json`;
+Semgrep and Bandit are installed via `pip install <tool>==<version>` and ESLint via
+`npm install eslint@<version>`, pinned to an exact version but relying on PyPI/npm registry
+integrity rather than PolyScan's own checksum verification.
 
 | Engine | License |
 |---|---|
@@ -156,7 +160,7 @@ maintains its own unrestricted rule set for exactly this reason.
 
 ## Versioning
 
-Releases are tagged as semver (`vX.Y.Z`) with a floating major tag (e.g. `v2`) that always points at the latest `v2.x.y` — pin `@v2` for automatic minor/patch updates, or pin an exact `@vX.Y.Z`. Tags `v1` through `v15` predate this scheme (plain incrementing integers, not semver) and are kept as-is for existing consumers; new usage should pin `@v2` or later. See [CHANGELOG.md](CHANGELOG.md).
+Releases are tagged as semver (`vX.Y.Z`) with a floating major tag (e.g. `v16`) that always points at the latest `v16.x.y` — pin `@v16` for automatic minor/patch updates, or pin an exact `@vX.Y.Z`. Tags `v1` through `v15` predate this scheme (plain incrementing integers, not semver) and are kept as-is for existing consumers; the new scheme starts at `v16` precisely to avoid colliding with any of them. New usage should pin `@v16` or later. See [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 

@@ -6,7 +6,8 @@ name: Release (build + tag)
 # branch-protected, so we never commit dist to main here).
 #
 # v1..v15 are legacy tags from before this workflow adopted semver + a floating major tag;
-# they are left untouched. The new scheme starts at v2.0.0 / floating v2 to avoid reusing v1.
+# they are left untouched. The new scheme starts at v16.0.0 / floating v16 — v1..v15 are ALL
+# already taken as literal legacy tags, so v16 is the first genuinely unused major.
 #
 # If you want dist committed to main, open a PR; this workflow only produces release tags.
 
@@ -60,8 +61,8 @@ jobs:
       - name: Compute next version
         id: version
         run: |
-          LATEST=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' | sed 's/^v//' | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)
-          LATEST=${LATEST:-1.0.0}
+          LATEST=$(git tag --list 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sed 's/^v//' | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)
+          LATEST=${LATEST:-15.0.0}
           echo "latest = v${LATEST}"
           IFS=. read -r MAJOR MINOR PATCH <<< "$LATEST"
           case "${{ inputs.bump }}" in
@@ -69,8 +70,8 @@ jobs:
             minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
             patch) PATCH=$((PATCH + 1)) ;;
           esac
-          # v1 is already taken by a legacy pre-semver tag; start the new scheme at v2.0.0.
-          if [ "$MAJOR" -lt 2 ]; then MAJOR=2; MINOR=0; PATCH=0; fi
+          # v1..v15 are already taken by legacy pre-semver tags; start the new scheme at v16.0.0.
+          if [ "$MAJOR" -lt 16 ]; then MAJOR=16; MINOR=0; PATCH=0; fi
           VERSION="v${MAJOR}.${MINOR}.${PATCH}"
           echo "next = ${VERSION}"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
@@ -85,6 +86,6 @@ jobs:
           # Peel to ^{commit}: tagging the annotated tag's name directly would create a
           # tag-of-a-tag (the lightweight tag pointing at the tag object, not the commit).
           git tag -f "${{ steps.version.outputs.major }}" "${{ steps.version.outputs.version }}^{commit}"
-          # push ONLY tags, never main (branch protection blocks main pushes)
-          git push origin "${{ steps.version.outputs.version }}"
-          git push origin "${{ steps.version.outputs.major }}" --force
+          # push ONLY tags, never main (branch protection blocks main pushes); atomic so a
+          # partial failure can't publish the version tag while leaving the floating tag stale
+          git push --atomic origin "${{ steps.version.outputs.version }}" "+refs/tags/${{ steps.version.outputs.major }}"
