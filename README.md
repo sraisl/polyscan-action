@@ -129,6 +129,31 @@ npm run build      # bundles src/main.ts -> dist/index.js (must be committed)
 
 > The `dist/` folder is committed on purpose — GitHub runs the bundled `dist/index.js` directly.
 
+## Third-party tools & licenses
+
+PolyScan itself is MIT-licensed, and its bundled `dist/index.js` only pulls in permissively
+licensed npm dependencies (MIT / Apache-2.0 / ISC — see `dist/licenses.txt`). The scan engines
+below are **not** bundled or vendored: PolyScan downloads each one from its official distribution
+channel (PyPI, npm, Maven Central, or GitHub Releases) at scan time, verifies it via SHA-256, and
+invokes it as a separate subprocess — PolyScan never links against or redistributes their code.
+
+| Engine | License |
+|---|---|
+| ESLint, gitleaks, zizmor | MIT |
+| Bandit, gosec, detekt, Trivy | Apache-2.0 |
+| Semgrep, OpenGrep, SpotBugs | LGPL-2.1 |
+| FindSecBugs | LGPL-3.0 |
+| hadolint | GPL-3.0 |
+| trufflehog | AGPL-3.0 (opt-in only) |
+
+**Semgrep's default rules — read this if you use PolyScan commercially.** Semgrep is scanned
+with `--config auto`, which pulls Semgrep's own registry rules. Since late 2024 those rules are
+licensed under the [Semgrep Rules License v1.0](https://semgrep.dev/legal/rules-license/), which
+restricts use to internal, non-SaaS, non-competing contexts — the Semgrep *engine* stays LGPL-2.1,
+but its *default ruleset* does not. If you run PolyScan as part of a commercial SaaS offering or a
+product that competes with Semgrep, select `opengrep` instead (`engines: "opengrep,..."`), which
+maintains its own unrestricted rule set for exactly this reason.
+
 ## Versioning
 
 Releases are tagged as semver (`vX.Y.Z`) with a floating major tag (e.g. `v2`) that always points at the latest `v2.x.y` — pin `@v2` for automatic minor/patch updates, or pin an exact `@vX.Y.Z`. Tags `v1` through `v15` predate this scheme (plain incrementing integers, not semver) and are kept as-is for existing consumers; new usage should pin `@v2` or later. See [CHANGELOG.md](CHANGELOG.md).
