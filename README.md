@@ -132,19 +132,21 @@ npm run build      # bundles src/main.ts -> dist/index.js (must be committed)
 ## Third-party tools & licenses
 
 PolyScan itself is MIT-licensed, and its bundled `dist/index.js` only pulls in permissively
-licensed npm dependencies (MIT / Apache-2.0 / ISC — see `dist/licenses.txt`). The scan engines
-below are **not** bundled or vendored: PolyScan installs each one from its official distribution
-channel at scan time and invokes it as a separate subprocess — PolyScan never links against or
-redistributes their code. Binary/archive downloads (detekt, gitleaks, gosec, hadolint, opengrep,
-SpotBugs/FindSecBugs, Trivy, trufflehog, zizmor) are SHA-256-verified against `tools.lock.json`;
-Semgrep and Bandit are installed via `pip install <tool>==<version>` and ESLint via
-`npm install eslint@<version>`, pinned to an exact version but relying on PyPI/npm registry
-integrity rather than PolyScan's own checksum verification.
+licensed npm dependencies — see the full, generated inventory in `dist/licenses.txt` (currently
+MIT, Apache-2.0, ISC, BSD-3-Clause, BlueOak-1.0.0, 0BSD, and CC0; that file, not this README, is
+the authoritative list). The scan engines below are **not** bundled or vendored: PolyScan installs
+each one from its official distribution channel at scan time and invokes it as a separate
+subprocess — PolyScan never links against or redistributes their code. Binary/archive downloads
+(detekt, gitleaks, gosec, hadolint, the Kotlin compiler, opengrep, SpotBugs/FindSecBugs, Trivy,
+trufflehog, zizmor) are SHA-256-verified against `tools.lock.json`; Semgrep and Bandit are
+installed via `pip install <tool>==<version>` and ESLint via `npm install eslint@<version>`,
+pinned to an exact version but relying on PyPI/npm registry integrity rather than PolyScan's own
+checksum verification.
 
 | Engine | License |
 |---|---|
 | ESLint, gitleaks, zizmor | MIT |
-| Bandit, gosec, detekt, Trivy | Apache-2.0 |
+| Bandit, gosec, detekt, Kotlin compiler, Trivy | Apache-2.0 |
 | Semgrep, OpenGrep, SpotBugs | LGPL-2.1 |
 | FindSecBugs | LGPL-3.0 |
 | hadolint | GPL-3.0 |
