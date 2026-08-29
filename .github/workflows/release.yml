@@ -23,10 +23,13 @@ on:
 # Serialize releases: two concurrent dispatches could both compute their next version from the
 # same starting tag, then race to force-move the floating major tag — the one that pushes last
 # wins, which can regress it (e.g. a minor release landing, then a patch release started earlier
-# overwriting v16 back to the older patch). Queue runs instead of racing them.
+# overwriting v16 back to the older patch). `queue: max` (not just cancel-in-progress: false,
+# which only keeps one run pending and cancels/replaces it on a third dispatch) queues every
+# dispatched release and runs them one at a time.
 concurrency:
   group: release
   cancel-in-progress: false
+  queue: max
 
 permissions:
   contents: write
