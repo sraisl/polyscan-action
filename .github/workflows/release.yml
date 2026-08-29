@@ -82,7 +82,9 @@ jobs:
             -c user.name="github-actions[bot]" \
             -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
             tag -a "${{ steps.version.outputs.version }}" -m "Release ${{ steps.version.outputs.version }}"
-          git tag -f "${{ steps.version.outputs.major }}" "${{ steps.version.outputs.version }}"
+          # Peel to ^{commit}: tagging the annotated tag's name directly would create a
+          # tag-of-a-tag (the lightweight tag pointing at the tag object, not the commit).
+          git tag -f "${{ steps.version.outputs.major }}" "${{ steps.version.outputs.version }}^{commit}"
           # push ONLY tags, never main (branch protection blocks main pushes)
           git push origin "${{ steps.version.outputs.version }}"
           git push origin "${{ steps.version.outputs.major }}" --force
