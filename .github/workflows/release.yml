@@ -20,6 +20,14 @@ on:
         options: [patch, minor, major]
         default: patch
 
+# Serialize releases: two concurrent dispatches could both compute their next version from the
+# same starting tag, then race to force-move the floating major tag — the one that pushes last
+# wins, which can regress it (e.g. a minor release landing, then a patch release started earlier
+# overwriting v16 back to the older patch). Queue runs instead of racing them.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 permissions:
   contents: write
 
@@ -61,7 +69,10 @@ jobs:
       - name: Compute next version
         id: version
         run: |
-          LATEST=$(git tag --list 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sed 's/^v//' | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)
+          # grep wrapped with `|| true`: under bash's default -eo pipefail, a zero-match grep
+          # (e.g. bootstrapping before any v16+ semver tag exists) would otherwise abort the
+          # script here instead of falling through to the LATEST fallback below.
+          LATEST=$(git tag --list 'v*' | { grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' || true; } | sed 's/^v//' | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)
           LATEST=${LATEST:-15.0.0}
           echo "latest = v${LATEST}"
           IFS=. read -r MAJOR MINOR PATCH <<< "$LATEST"

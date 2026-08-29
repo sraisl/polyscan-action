@@ -2,8 +2,8 @@
 
 ## Supported Versions
 
-Only the latest `v2.x.y` release is actively supported. Please upgrade before reporting an
-issue if you're on an older or legacy (`v1`–`v15`) tag.
+Only the [latest release](../../releases/latest) is actively supported. Please upgrade before
+reporting an issue if you're on an older release or a legacy (`v1`–`v15`) tag.
 
 ## Reporting a Vulnerability
 
