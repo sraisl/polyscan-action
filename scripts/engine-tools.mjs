@@ -115,7 +115,7 @@ async function githubRelease(tool, version) {
   return fetchJson(url);
 }
 
-async function githubAssetDigest(release, assetName) {
+export async function githubAssetDigest(release, assetName) {
   const asset = release.assets?.find((candidate) => candidate.name === assetName);
   if (!asset) throw new Error(`release ${release.tag_name} has no asset ${assetName}`);
 
@@ -132,9 +132,11 @@ async function githubAssetDigest(release, assetName) {
     const sha256 = checksumFromText(text, assetName);
     if (sha256) return { asset, sha256, verified: true };
   }
-  // No checksum file found: download the asset and compute its SHA-256 directly.
-  // This is safe because we pin the computed digest in tools.lock.json and verify it on every
-  // subsequent download — the first fetch establishes the trusted value.
+  // No checksum file found: download the asset and compute its SHA-256 directly. This is
+  // trust-on-first-use, not independently verified — this initial download isn't checked
+  // against any published digest, only against itself. It becomes repeatably verifiable
+  // from here on because the computed digest is pinned into tools.lock.json and cross-checked
+  // against a fresh download on every subsequent update.
   const downloaded = await digestResponse(await fetchResponse(asset.browser_download_url), [
     "sha256",
   ]);
@@ -174,7 +176,7 @@ async function latestVersion(tool) {
   }
 }
 
-async function resolveGithubUpdate(tool, version) {
+export async function resolveGithubUpdate(tool, version) {
   const release = await githubRelease(tool, version);
   const assetName = githubAssetName(tool, version);
   const { asset, sha256, verified } = await githubAssetDigest(release, assetName);
