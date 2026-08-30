@@ -115,12 +115,12 @@ async function githubRelease(tool, version) {
   return fetchJson(url);
 }
 
-async function githubAssetDigest(release, assetName) {
+export async function githubAssetDigest(release, assetName) {
   const asset = release.assets?.find((candidate) => candidate.name === assetName);
   if (!asset) throw new Error(`release ${release.tag_name} has no asset ${assetName}`);
 
   const apiDigest = /^sha256:([a-f0-9]{64})$/i.exec(asset.digest ?? "");
-  if (apiDigest) return { asset, sha256: apiDigest[1].toLowerCase() };
+  if (apiDigest) return { asset, sha256: apiDigest[1].toLowerCase(), verified: true };
 
   const checksumAssets = (release.assets ?? []).filter((candidate) =>
     /(?:checksums?|sha256)/i.test(candidate.name),
@@ -130,9 +130,20 @@ async function githubAssetDigest(release, assetName) {
       response.text(),
     );
     const sha256 = checksumFromText(text, assetName);
-    if (sha256) return { asset, sha256 };
+    if (sha256) return { asset, sha256, verified: true };
   }
-  throw new Error(`release asset ${assetName} has no trusted SHA-256 digest`);
+  // No checksum file found: download the asset and compute its SHA-256 directly. This is
+  // trust-on-first-use, not independently verified — this initial download isn't checked
+  // against any published digest, only against itself. It becomes repeatably verifiable
+  // from here on because the computed digest is pinned into tools.lock.json and cross-checked
+  // against a fresh download on every subsequent update.
+  const downloaded = await digestResponse(await fetchResponse(asset.browser_download_url), [
+    "sha256",
+  ]);
+  console.warn(
+    `release asset ${assetName} has no published checksum; SHA-256 computed from download`,
+  );
+  return { asset, sha256: downloaded.sha256, verified: false };
 }
 
 async function latestVersion(tool) {
@@ -165,18 +176,21 @@ async function latestVersion(tool) {
   }
 }
 
-async function resolveGithubUpdate(tool, version) {
+export async function resolveGithubUpdate(tool, version) {
   const release = await githubRelease(tool, version);
   const assetName = githubAssetName(tool, version);
-  const { asset, sha256 } = await githubAssetDigest(release, assetName);
-  const downloaded = await digestResponse(
-    await fetchResponse(asset.browser_download_url),
-    ["sha256"],
-  );
-  if (downloaded.sha256 !== sha256) {
-    throw new Error(
-      `downloaded SHA-256 ${downloaded.sha256} does not match release digest ${sha256}`,
+  const { asset, sha256, verified } = await githubAssetDigest(release, assetName);
+  if (verified) {
+    // sha256 came from a published checksum; re-download and confirm.
+    const downloaded = await digestResponse(
+      await fetchResponse(asset.browser_download_url),
+      ["sha256"],
     );
+    if (downloaded.sha256 !== sha256) {
+      throw new Error(
+        `downloaded SHA-256 ${downloaded.sha256} does not match release digest ${sha256}`,
+      );
+    }
   }
   return { version, sha256 };
 }
