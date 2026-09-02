@@ -87940,7 +87940,7 @@ function mapSeverity(validationStatus) {
 }
 function parseBetterleaksJson(report, abs) {
     const findings = [];
-    for (const raw of report ?? []) {
+    for (const raw of Array.isArray(report) ? report : []) {
         const f = raw;
         const ruleId = f.RuleID ?? "betterleaks";
         const file = f.File ?? "unknown";

@@ -49,7 +49,7 @@ interface BetterleaksFinding {
 
 export function parseBetterleaksJson(report: unknown, abs: string): Finding[] {
   const findings: Finding[] = [];
-  for (const raw of (report as unknown[] | null) ?? []) {
+  for (const raw of Array.isArray(report) ? report : []) {
     const f = raw as BetterleaksFinding;
     const ruleId = f.RuleID ?? "betterleaks";
     const file = f.File ?? "unknown";

@@ -96,3 +96,9 @@ test("parseBetterleaksJson: empty array returns empty array", () => {
 test("parseBetterleaksJson: null report returns empty array", () => {
   assert.deepEqual(parseBetterleaksJson(null, ABS), []);
 });
+
+test("parseBetterleaksJson: non-array report returns empty array instead of throwing", () => {
+  assert.deepEqual(parseBetterleaksJson({ unexpected: "object" }, ABS), []);
+  assert.deepEqual(parseBetterleaksJson("not json", ABS), []);
+  assert.deepEqual(parseBetterleaksJson(42, ABS), []);
+});
