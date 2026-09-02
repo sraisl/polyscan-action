@@ -115,7 +115,7 @@ function findingLocation(finding: Finding): string {
   return finding.line > 0 ? `${cleanFile}:${finding.line}` : cleanFile;
 }
 
-const SECRET_ENGINES: ReadonlySet<EngineName> = new Set<EngineName>(["gitleaks", "trufflehog"]);
+const SECRET_ENGINES: ReadonlySet<EngineName> = new Set<EngineName>(["gitleaks", "betterleaks", "trufflehog"]);
 
 function secretsSection(findings: Finding[]): string[] {
   const secrets = findings.filter((finding) => SECRET_ENGINES.has(finding.engine as EngineName));
@@ -137,9 +137,12 @@ function secretsSection(findings: Finding[]): string[] {
     ...lines,
     "",
     "_gitleaks is run with `--redact`: secret values are masked at source. " +
-      "trufflehog's SARIF message never includes the secret value either. " +
-      "Neither appears in logs or SARIF. trufflehog's `critical` rows are **verified live** " +
-      "credentials; `high` rows matched a secret pattern but verification did not confirm them._",
+      "betterleaks' JSON report is read for its rule description only — the `Secret`/`Match` " +
+      "fields that carry the actual value are never parsed. trufflehog's SARIF message never " +
+      "includes the secret value either. None of these appear in logs, SARIF or this summary. " +
+      "trufflehog's and betterleaks' `critical` rows are **verified live** credentials; `high` " +
+      "rows matched a secret pattern but live verification did not confirm (or was not " +
+      "attempted for) them._",
     "",
   ];
 }

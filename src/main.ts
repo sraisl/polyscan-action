@@ -13,6 +13,7 @@ import { runSpotbugs } from "./engines/spotbugs";
 import { runTrivy } from "./engines/trivy";
 import { runDetekt } from "./engines/detekt";
 import { runGitleaks } from "./engines/gitleaks";
+import { runBetterleaks } from "./engines/betterleaks";
 import { runGosec } from "./engines/gosec";
 import { runHadolint } from "./engines/hadolint";
 import { runZizmor } from "./engines/zizmor";
@@ -119,6 +120,8 @@ async function runEngine(
         return await runDetekt(target);
       case "gitleaks":
         return await runGitleaks(target);
+      case "betterleaks":
+        return await runBetterleaks(target);
       case "gosec":
         return await runGosec(target);
       case "hadolint":
