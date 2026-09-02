@@ -137,9 +137,9 @@ function secretsSection(findings: Finding[]): string[] {
     ...lines,
     "",
     "_gitleaks is run with `--redact`: secret values are masked at source. " +
-      "betterleaks' JSON report is read for its rule description only — the `Secret`/`Match` " +
-      "fields that carry the actual value are never parsed. trufflehog's SARIF message never " +
-      "includes the secret value either. None of these appear in logs, SARIF or this summary. " +
+      "betterleaks is also run with `--redact`, so its secret-bearing JSON fields are masked " +
+      "before PolyScan reads the report. trufflehog's SARIF message never includes the secret " +
+      "value either. None of these appear in logs, SARIF or this summary. " +
       "trufflehog's and betterleaks' `critical` rows are **verified live** credentials; `high` " +
       "rows matched a secret pattern but live verification did not confirm (or was not " +
       "attempted for) them._",

@@ -77,7 +77,16 @@ export async function runBetterleaks(target: string): Promise<EngineResult> {
     const reportOut = path.join(workdir, "betterleaks.json");
     const res = await run(
       bin,
-      ["dir", abs, "--report-path", reportOut, "--report-format", "json"],
+      [
+        "dir",
+        abs,
+        "--report-path",
+        reportOut,
+        "--report-format",
+        "json",
+        "--no-banner",
+        "--redact",
+      ],
       { cwd: abs },
     );
 
@@ -86,7 +95,7 @@ export async function runBetterleaks(target: string): Promise<EngineResult> {
         engine: "betterleaks",
         findings: [],
         status: "failed",
-        note: `betterleaks produced no report: ${(res.stderr || res.stdout).slice(0, 200)}`,
+        note: `betterleaks produced no report (exit ${res.exitCode})`,
       };
     }
 
