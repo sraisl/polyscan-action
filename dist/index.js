@@ -87901,7 +87901,10 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.parseBetterleaksJson = parseBetterleaksJson;
 exports.runBetterleaks = runBetterleaks;
-// betterleaks engine adapter — secret / credential detection in git history + working tree.
+// betterleaks engine adapter — secret / credential detection in the current
+// working tree (`betterleaks dir`, current filesystem state only; unlike
+// gitleaks' default `detect`, this does not walk git history — that's a
+// separate `betterleaks git` command PolyScan does not currently run).
 // Downloads the betterleaks binary on demand and parses its JSON report.
 //
 // Unlike gitleaks, betterleaks' SARIF writer emits no per-result "level" at

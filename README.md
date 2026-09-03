@@ -88,7 +88,7 @@ jobs:
 | **Trivy** | deps + IaC | SCA (vulnerable dependencies / CVEs) + misconfig; binary downloaded on demand |
 | **detekt** | Kotlin | Kotlin-native static analysis (incl. security rules) via detekt CLI; SARIF parsed |
 | **gitleaks** | git history + working tree | Secret / credential detection (API keys, tokens, passwords) via gitleaks CLI; SARIF parsed |
-| **betterleaks** | git history + working tree | Secret / credential detection via betterleaks CLI (maintained by the original gitleaks author); JSON report parsed. When a rule defines live validation, a confirmed-active credential is reported as `critical`, a confirmed-dead one as `low`, and everything else defaults to `high` |
+| **betterleaks** | working tree (current filesystem state; not git history) | Secret / credential detection via betterleaks CLI (maintained by the original gitleaks author); JSON report parsed. When a rule defines live validation, a confirmed-active credential is reported as `critical`, a confirmed-dead one as `low`, and everything else defaults to `high` |
 | **gosec** | Go | Go-native security analysis; scans each detected Go module and preserves native severity and CWE data from SARIF |
 | **hadolint** | Dockerfiles | Dockerfile linter (incl. embedded shell via ShellCheck); standalone Linux x64 binary; SARIF parsed natively |
 | **zizmor** | GitHub Actions workflows | Workflow security (dangerous triggers, template-injection, unpinned actions, excessive permissions, credential persistence); standalone Linux x64 binary; runs `--offline`; SARIF parsed natively |
