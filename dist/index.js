@@ -87943,6 +87943,7 @@ function mapSeverity(validationStatus) {
 }
 function parseBetterleaksJson(report, abs) {
     const findings = [];
+    const prefix = abs.endsWith("/") ? abs : abs + "/";
     for (const raw of Array.isArray(report) ? report : []) {
         const f = raw;
         const ruleId = f.RuleID ?? "betterleaks";
@@ -87952,7 +87953,7 @@ function parseBetterleaksJson(report, abs) {
             ruleId,
             severity: mapSeverity(f.ValidationStatus ?? ""),
             message: f.Description ?? ruleId,
-            file: file.replace(abs + "/", ""),
+            file: file.startsWith(prefix) ? file.slice(prefix.length) : file,
             line: f.StartLine ?? 0,
         });
     }
@@ -87964,7 +87965,7 @@ async function runBetterleaks(target) {
     try {
         const bin = await ensureBetterleaks();
         if (!bin) {
-            return { engine: "betterleaks", findings: [], status: "failed", note: "betterleaks not installed" };
+            return { engine: "betterleaks", findings: [], status: "failed", note: "betterleaks unavailable" };
         }
         const reportOut = path.join(workdir, "betterleaks.json");
         const res = await (0, exec_1.run)(bin, [
