@@ -10,6 +10,7 @@ import {
 
 const EXPECTED_TOOLS = [
   "bandit",
+  "betterleaks",
   "detekt",
   "eslint",
   "findsecbugs",
@@ -35,6 +36,7 @@ test("tool lock contains every scanner dependency", () => {
 
 test("downloaded binary tools have pinned SHA-256 digests", () => {
   for (const name of [
+    "betterleaks",
     "detekt",
     "findsecbugs",
     "gitleaks",
@@ -83,5 +85,9 @@ test("tool metadata expands to the existing download URLs", () => {
   assert.equal(
     githubReleaseUrl(TOOLS.trufflehog),
     `https://github.com/trufflesecurity/trufflehog/releases/download/v${TOOLS.trufflehog.version}/trufflehog_${TOOLS.trufflehog.version}_linux_amd64.tar.gz`,
+  );
+  assert.equal(
+    githubReleaseUrl(TOOLS.betterleaks),
+    `https://github.com/betterleaks/betterleaks/releases/download/v${TOOLS.betterleaks.version}/betterleaks_${TOOLS.betterleaks.version}_linux_x64.tar.gz`,
   );
 });

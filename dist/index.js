@@ -87698,6 +87698,7 @@ exports.DEFAULT_ENGINES = [
     "trivy",
     "detekt",
     "gitleaks",
+    "betterleaks",
     "gosec",
     "hadolint",
     "zizmor",
@@ -87711,6 +87712,7 @@ exports.SUPPORTED_ENGINES = [
     "trivy",
     "detekt",
     "gitleaks",
+    "betterleaks",
     "gosec",
     "hadolint",
     "zizmor",
@@ -87852,6 +87854,168 @@ async function runBandit(target) {
     }
     finally {
         tool.cleanup();
+    }
+}
+
+
+/***/ }),
+
+/***/ 89105:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.parseBetterleaksJson = parseBetterleaksJson;
+exports.runBetterleaks = runBetterleaks;
+// betterleaks engine adapter — secret / credential detection in the current
+// working tree (`betterleaks dir`, current filesystem state only; unlike
+// gitleaks' default `detect`, this does not walk git history — that's a
+// separate `betterleaks git` command PolyScan does not currently run).
+// Downloads the betterleaks binary on demand and parses its JSON report.
+//
+// Unlike gitleaks, betterleaks' SARIF writer emits no per-result "level" at
+// all (see report/sarif.go upstream — no Level field on Results), so there's
+// no severity to read from SARIF. Its JSON report does carry a
+// ValidationStatus per finding when a rule defines a `validate` block (an
+// async check against the credential's own provider API, same idea as
+// trufflehog's live verification), so JSON is used here and severity is
+// derived from that field instead.
+const core = __importStar(__nccwpck_require__(37484));
+const fs = __importStar(__nccwpck_require__(73024));
+const os = __importStar(__nccwpck_require__(48161));
+const path = __importStar(__nccwpck_require__(76760));
+const tc = __importStar(__nccwpck_require__(33472));
+const exec_1 = __nccwpck_require__(73190);
+const target_1 = __nccwpck_require__(76746);
+const tools_1 = __nccwpck_require__(51732);
+const tool_versions_1 = __nccwpck_require__(88947);
+const BETTERLEAKS = tool_versions_1.TOOLS.betterleaks;
+// A "valid" status means the secret was confirmed live against its own
+// provider API — a confirmed active breach, so it maps to critical, the same
+// treatment trufflehog gives a verified secret. "invalid"/"revoked" secrets
+// are pattern matches known not to work, so they're downgraded to low rather
+// than dropped outright. Everything else (no validation performed, or an
+// indeterminate/errored validation attempt) defaults to high.
+function mapSeverity(validationStatus) {
+    switch ((validationStatus || "").toLowerCase()) {
+        case "valid":
+            return "critical";
+        case "invalid":
+        case "revoked":
+            return "low";
+        default:
+            return "high";
+    }
+}
+function parseBetterleaksJson(report, abs) {
+    const findings = [];
+    for (const raw of Array.isArray(report) ? report : []) {
+        const f = raw;
+        const ruleId = f.RuleID ?? "betterleaks";
+        const file = f.File ?? "unknown";
+        findings.push({
+            engine: "betterleaks",
+            ruleId,
+            severity: mapSeverity(f.ValidationStatus ?? ""),
+            message: f.Description ?? ruleId,
+            file: file.replace(abs + "/", ""),
+            line: f.StartLine ?? 0,
+        });
+    }
+    return findings;
+}
+async function runBetterleaks(target) {
+    const abs = (0, target_1.resolveTarget)(target);
+    const workdir = fs.mkdtempSync(path.join(os.tmpdir(), "polyscan-betterleaks-"));
+    try {
+        const bin = await ensureBetterleaks();
+        if (!bin) {
+            return { engine: "betterleaks", findings: [], status: "failed", note: "betterleaks not installed" };
+        }
+        const reportOut = path.join(workdir, "betterleaks.json");
+        const res = await (0, exec_1.run)(bin, [
+            "dir",
+            abs,
+            "--report-path",
+            reportOut,
+            "--report-format",
+            "json",
+            "--no-banner",
+            "--redact",
+        ], { cwd: abs });
+        if (!fs.existsSync(reportOut)) {
+            return {
+                engine: "betterleaks",
+                findings: [],
+                status: "failed",
+                note: `betterleaks produced no report (exit ${res.exitCode})`,
+            };
+        }
+        try {
+            const report = JSON.parse(fs.readFileSync(reportOut, "utf-8"));
+            return { engine: "betterleaks", findings: parseBetterleaksJson(report, abs), status: "success" };
+        }
+        catch (err) {
+            return {
+                engine: "betterleaks",
+                findings: [],
+                status: "failed",
+                note: `parse error: ${String(err).slice(0, 200)}`,
+            };
+        }
+    }
+    finally {
+        fs.rmSync(workdir, { recursive: true, force: true });
+    }
+}
+async function ensureBetterleaks() {
+    if (await (0, exec_1.which)("betterleaks"))
+        return "betterleaks";
+    core.info(`betterleaks not found — downloading v${BETTERLEAKS.version}…`);
+    try {
+        return await (0, tools_1.cachedTool)("betterleaks", BETTERLEAKS.version, "betterleaks", async (directory) => {
+            const archive = await (0, tools_1.downloadVerified)((0, tool_versions_1.githubReleaseUrl)(BETTERLEAKS), BETTERLEAKS.sha256);
+            await tc.extractTar(archive, directory);
+            fs.chmodSync(path.join(directory, "betterleaks"), 0o700);
+        });
+    }
+    catch (err) {
+        core.warning(`betterleaks download failed: ${String(err).slice(0, 200)}`);
+        return null;
     }
 }
 
@@ -90001,6 +90165,7 @@ const spotbugs_1 = __nccwpck_require__(70240);
 const trivy_1 = __nccwpck_require__(10139);
 const detekt_1 = __nccwpck_require__(19308);
 const gitleaks_1 = __nccwpck_require__(56363);
+const betterleaks_1 = __nccwpck_require__(89105);
 const gosec_1 = __nccwpck_require__(7668);
 const hadolint_1 = __nccwpck_require__(10544);
 const zizmor_1 = __nccwpck_require__(76718);
@@ -90072,6 +90237,8 @@ async function runEngine(name, target, trivyImage, opengrepConfig) {
                 return await (0, detekt_1.runDetekt)(target);
             case "gitleaks":
                 return await (0, gitleaks_1.runGitleaks)(target);
+            case "betterleaks":
+                return await (0, betterleaks_1.runBetterleaks)(target);
             case "gosec":
                 return await (0, gosec_1.runGosec)(target);
             case "hadolint":
@@ -90751,7 +90918,7 @@ function findingLocation(finding) {
     const cleanFile = finding.file.startsWith("./") ? finding.file.slice(2) : finding.file;
     return finding.line > 0 ? `${cleanFile}:${finding.line}` : cleanFile;
 }
-const SECRET_ENGINES = new Set(["gitleaks", "trufflehog"]);
+const SECRET_ENGINES = new Set(["gitleaks", "betterleaks", "trufflehog"]);
 function secretsSection(findings) {
     const secrets = findings.filter((finding) => SECRET_ENGINES.has(finding.engine));
     if (secrets.length === 0)
@@ -90770,9 +90937,12 @@ function secretsSection(findings) {
         ...lines,
         "",
         "_gitleaks is run with `--redact`: secret values are masked at source. " +
-            "trufflehog's SARIF message never includes the secret value either. " +
-            "Neither appears in logs or SARIF. trufflehog's `critical` rows are **verified live** " +
-            "credentials; `high` rows matched a secret pattern but verification did not confirm them._",
+            "betterleaks is also run with `--redact`, so its secret-bearing JSON fields are masked " +
+            "before PolyScan reads the report. trufflehog's SARIF message never includes the secret " +
+            "value either. None of these appear in logs, SARIF or this summary. " +
+            "trufflehog's and betterleaks' `critical` rows are **verified live** credentials; `high` " +
+            "rows matched a secret pattern but live verification did not confirm (or was not " +
+            "attempted for) them._",
         "",
     ];
 }
@@ -147615,7 +147785,7 @@ module.exports = /*#__PURE__*/JSON.parse('{"name":"polyscan-action","version":"1
 /***/ ((module) => {
 
 "use strict";
-module.exports = /*#__PURE__*/JSON.parse('{"schemaVersion":1,"tools":{"bandit":{"provider":"pypi","package":"bandit","version":"1.9.4"},"detekt":{"provider":"github","repository":"detekt/detekt","version":"1.23.7","tagTemplate":"v{version}","assetTemplate":"detekt-cli-{version}-all.jar","sha256":"84beded283012cb2b38bcaef4996452fcd6069d2e9ca74b50eaa79e0ad21897e"},"eslint":{"provider":"npm","package":"eslint","version":"10.9.1"},"findsecbugs":{"provider":"maven","group":"com.h3xstream.findsecbugs","artifact":"findsecbugs-plugin","extension":"jar","version":"1.14.0","sha256":"6fa340344fa433ff46c2985dab1010e8bc739f9395c983594a5240095e92abc8"},"gitleaks":{"provider":"github","repository":"gitleaks/gitleaks","version":"8.30.1","tagTemplate":"v{version}","assetTemplate":"gitleaks_{version}_linux_x64.tar.gz","sha256":"551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"},"gosec":{"provider":"github","repository":"securego/gosec","version":"2.29.0","tagTemplate":"v{version}","assetTemplate":"gosec_{version}_linux_amd64.tar.gz","sha256":"6431b119741c1f4a50fdfcf94e782e16b9e642afc8c7fa9b5d39d48bf3003095"},"hadolint":{"provider":"github","repository":"hadolint/hadolint","version":"2.15.1","tagTemplate":"v{version}","assetTemplate":"hadolint-linux-x86_64","sha256":"c7187db94eeeeca956519a6af171adc31453941a1e777961f6e680f697c8c507"},"kotlin":{"provider":"github","repository":"JetBrains/kotlin","version":"2.4.10","tagTemplate":"v{version}","assetTemplate":"kotlin-compiler-{version}.zip","sha256":"473dd66c7a3ef4b182065b3da670466c1bf2773a9dbb0ed8b33a39fe9d4f876d"},"opengrep":{"provider":"github","repository":"opengrep/opengrep","version":"1.28.0","tagTemplate":"v{version}","assetTemplate":"opengrep_manylinux_x86","sha256":"85af2f34e5175995acbc431e1ca733e34062aad9640ad4308422abe1968b84cf"},"semgrep":{"provider":"pypi","package":"semgrep","version":"1.175.0"},"spotbugs":{"provider":"github","repository":"spotbugs/spotbugs","version":"4.10.4","tagTemplate":"{version}","assetTemplate":"spotbugs-{version}.tgz","sha256":"72bc0d4edd686e462c0f71f42a049b27bf4da6708797ff7b2b56dd202714b4e5"},"trivy":{"provider":"github","repository":"aquasecurity/trivy","version":"0.74.0","tagTemplate":"v{version}","assetTemplate":"trivy_{version}_Linux-64bit.tar.gz","sha256":"2ae6fe3ee734b7fdf11335663e18c75ea12dccc76062f09f164a3b0f8be4371a"},"trufflehog":{"provider":"github","repository":"trufflesecurity/trufflehog","version":"3.97.1","tagTemplate":"v{version}","assetTemplate":"trufflehog_{version}_linux_amd64.tar.gz","sha256":"f863ea3a8d786f7d097870496c977944cce7372a2fe1e56707d965016e543ece"},"zizmor":{"provider":"github","repository":"zizmorcore/zizmor","version":"1.29.0","tagTemplate":"v{version}","assetTemplate":"zizmor-x86_64-unknown-linux-gnu.tar.gz","sha256":"dd96df044a6e8538d5f423790f453bdd03d49e5b2bcc38214acc41a2f1297839"}}}');
+module.exports = /*#__PURE__*/JSON.parse('{"schemaVersion":1,"tools":{"bandit":{"provider":"pypi","package":"bandit","version":"1.9.4"},"betterleaks":{"provider":"github","repository":"betterleaks/betterleaks","version":"1.8.1","tagTemplate":"v{version}","assetTemplate":"betterleaks_{version}_linux_x64.tar.gz","sha256":"efa407244e1ea8e35f582b8a42becdeac08bdead04f68eb752adda722d583c2a"},"detekt":{"provider":"github","repository":"detekt/detekt","version":"1.23.7","tagTemplate":"v{version}","assetTemplate":"detekt-cli-{version}-all.jar","sha256":"84beded283012cb2b38bcaef4996452fcd6069d2e9ca74b50eaa79e0ad21897e"},"eslint":{"provider":"npm","package":"eslint","version":"10.9.1"},"findsecbugs":{"provider":"maven","group":"com.h3xstream.findsecbugs","artifact":"findsecbugs-plugin","extension":"jar","version":"1.14.0","sha256":"6fa340344fa433ff46c2985dab1010e8bc739f9395c983594a5240095e92abc8"},"gitleaks":{"provider":"github","repository":"gitleaks/gitleaks","version":"8.30.1","tagTemplate":"v{version}","assetTemplate":"gitleaks_{version}_linux_x64.tar.gz","sha256":"551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"},"gosec":{"provider":"github","repository":"securego/gosec","version":"2.29.0","tagTemplate":"v{version}","assetTemplate":"gosec_{version}_linux_amd64.tar.gz","sha256":"6431b119741c1f4a50fdfcf94e782e16b9e642afc8c7fa9b5d39d48bf3003095"},"hadolint":{"provider":"github","repository":"hadolint/hadolint","version":"2.15.1","tagTemplate":"v{version}","assetTemplate":"hadolint-linux-x86_64","sha256":"c7187db94eeeeca956519a6af171adc31453941a1e777961f6e680f697c8c507"},"kotlin":{"provider":"github","repository":"JetBrains/kotlin","version":"2.4.10","tagTemplate":"v{version}","assetTemplate":"kotlin-compiler-{version}.zip","sha256":"473dd66c7a3ef4b182065b3da670466c1bf2773a9dbb0ed8b33a39fe9d4f876d"},"opengrep":{"provider":"github","repository":"opengrep/opengrep","version":"1.28.0","tagTemplate":"v{version}","assetTemplate":"opengrep_manylinux_x86","sha256":"85af2f34e5175995acbc431e1ca733e34062aad9640ad4308422abe1968b84cf"},"semgrep":{"provider":"pypi","package":"semgrep","version":"1.175.0"},"spotbugs":{"provider":"github","repository":"spotbugs/spotbugs","version":"4.10.4","tagTemplate":"{version}","assetTemplate":"spotbugs-{version}.tgz","sha256":"72bc0d4edd686e462c0f71f42a049b27bf4da6708797ff7b2b56dd202714b4e5"},"trivy":{"provider":"github","repository":"aquasecurity/trivy","version":"0.74.0","tagTemplate":"v{version}","assetTemplate":"trivy_{version}_Linux-64bit.tar.gz","sha256":"2ae6fe3ee734b7fdf11335663e18c75ea12dccc76062f09f164a3b0f8be4371a"},"trufflehog":{"provider":"github","repository":"trufflesecurity/trufflehog","version":"3.97.1","tagTemplate":"v{version}","assetTemplate":"trufflehog_{version}_linux_amd64.tar.gz","sha256":"f863ea3a8d786f7d097870496c977944cce7372a2fe1e56707d965016e543ece"},"zizmor":{"provider":"github","repository":"zizmorcore/zizmor","version":"1.29.0","tagTemplate":"v{version}","assetTemplate":"zizmor-x86_64-unknown-linux-gnu.tar.gz","sha256":"dd96df044a6e8538d5f423790f453bdd03d49e5b2bcc38214acc41a2f1297839"}}}');
 
 /***/ })
 

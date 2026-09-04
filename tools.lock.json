@@ -6,6 +6,14 @@
       "package": "bandit",
       "version": "1.9.4"
     },
+    "betterleaks": {
+      "provider": "github",
+      "repository": "betterleaks/betterleaks",
+      "version": "1.8.1",
+      "tagTemplate": "v{version}",
+      "assetTemplate": "betterleaks_{version}_linux_x64.tar.gz",
+      "sha256": "efa407244e1ea8e35f582b8a42becdeac08bdead04f68eb752adda722d583c2a"
+    },
     "detekt": {
       "provider": "github",
       "repository": "detekt/detekt",
