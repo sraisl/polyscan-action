@@ -75,7 +75,7 @@ export async function runBetterleaks(target: string): Promise<EngineResult> {
   try {
     const bin = await ensureBetterleaks();
     if (!bin) {
-      return { engine: "betterleaks", findings: [], status: "failed", note: "betterleaks not installed" };
+      return { engine: "betterleaks", findings: [], status: "failed", note: "betterleaks unavailable" };
     }
 
     const reportOut = path.join(workdir, "betterleaks.json");
