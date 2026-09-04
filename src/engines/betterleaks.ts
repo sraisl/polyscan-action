@@ -52,6 +52,7 @@ interface BetterleaksFinding {
 
 export function parseBetterleaksJson(report: unknown, abs: string): Finding[] {
   const findings: Finding[] = [];
+  const prefix = abs.endsWith("/") ? abs : abs + "/";
   for (const raw of Array.isArray(report) ? report : []) {
     const f = raw as BetterleaksFinding;
     const ruleId = f.RuleID ?? "betterleaks";
@@ -61,7 +62,7 @@ export function parseBetterleaksJson(report: unknown, abs: string): Finding[] {
       ruleId,
       severity: mapSeverity(f.ValidationStatus ?? ""),
       message: f.Description ?? ruleId,
-      file: file.replace(abs + "/", ""),
+      file: file.startsWith(prefix) ? file.slice(prefix.length) : file,
       line: f.StartLine ?? 0,
     });
   }
