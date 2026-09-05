@@ -165,6 +165,17 @@ maintains its own unrestricted rule set for exactly this reason.
 
 Releases are tagged as semver (`vX.Y.Z`) with a floating major tag (e.g. `v16`) that always points at the latest `v16.x.y` — pin `@v16` for automatic minor/patch updates, or pin an exact `@vX.Y.Z`. Tags `v1` through `v15` predate this scheme (plain incrementing integers, not semver) and are kept as-is for existing consumers; the new scheme starts at `v16` precisely to avoid colliding with any of them. New usage should pin `@v16` or later. See [CHANGELOG.md](CHANGELOG.md).
 
+## Releasing
+
+Releases are cut manually via the `Release` workflow (`.github/workflows/release.yml`):
+
+1. On the Actions tab, run the `Release` workflow (`workflow_dispatch`) against `main`.
+2. It checks out `main`, runs typecheck/tests, rebuilds `dist/` and verifies it matches what's committed.
+3. It computes the next `vN` tag (highest existing `vN` + 1), tags `main`, and pushes **only the tag** — `main` is branch-protected and is never pushed to by this workflow.
+4. Consumers pin `sraisl/polyscan-action@vN` to that tag (see [Usage](#usage)).
+
+If `dist/` doesn't match a fresh build, the workflow fails — merge a PR that rebuilds and commits `dist/` before releasing.
+
 ## License
 
 MIT © Stefan Raisl
