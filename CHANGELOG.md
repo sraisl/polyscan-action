@@ -13,6 +13,24 @@ tags and must not be reused or moved.
 
 ## [Unreleased]
 
+## [v16.0.2] - 2026-09-05
+
+### Added
+
+- **betterleaks** engine: secret / credential detection in the current working tree via the
+  betterleaks CLI (maintained by the original gitleaks author). Live-validated credentials are
+  reported as `critical` (confirmed active) or `low` (confirmed dead); everything else defaults
+  to `high`.
+
+### Fixed
+
+- `parseBetterleaksJson` no longer mis-strips file paths that don't start with the scan target
+  prefix exactly.
+- Corrected the "betterleaks unavailable" error note and the README's coverage claim: betterleaks
+  scans the working tree only, not git history.
+
+## [v16.0.1] - 2026-08-30
+
 ### Changed
 
 - Renamed the Marketplace listing to PolyScan SAST Security Scanner.
