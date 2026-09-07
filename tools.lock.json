@@ -17,15 +17,15 @@
     "detekt": {
       "provider": "github",
       "repository": "detekt/detekt",
-      "version": "1.23.7",
+      "version": "1.23.8",
       "tagTemplate": "v{version}",
       "assetTemplate": "detekt-cli-{version}-all.jar",
-      "sha256": "84beded283012cb2b38bcaef4996452fcd6069d2e9ca74b50eaa79e0ad21897e"
+      "sha256": "2ce2ff952e150baf28a29cda70a363b0340b3e81a55f43e51ec5edffc3d066c1"
     },
     "eslint": {
       "provider": "npm",
       "package": "eslint",
-      "version": "10.9.1"
+      "version": "10.10.0"
     },
     "findsecbugs": {
       "provider": "maven",
@@ -62,23 +62,23 @@
     "kotlin": {
       "provider": "github",
       "repository": "JetBrains/kotlin",
-      "version": "2.4.10",
+      "version": "2.4.20",
       "tagTemplate": "v{version}",
       "assetTemplate": "kotlin-compiler-{version}.zip",
-      "sha256": "473dd66c7a3ef4b182065b3da670466c1bf2773a9dbb0ed8b33a39fe9d4f876d"
+      "sha256": "59e9ca74c7904ef2c122b12114937673ccce68de820a663f0ed66ccf8799e0b7"
     },
     "opengrep": {
       "provider": "github",
       "repository": "opengrep/opengrep",
-      "version": "1.28.0",
+      "version": "1.29.0",
       "tagTemplate": "v{version}",
       "assetTemplate": "opengrep_manylinux_x86",
-      "sha256": "85af2f34e5175995acbc431e1ca733e34062aad9640ad4308422abe1968b84cf"
+      "sha256": "3365ef49d04893e01338d85d9bbd49b2bd5261ad4c9c0df0a6a0f8d44232ae13"
     },
     "semgrep": {
       "provider": "pypi",
       "package": "semgrep",
-      "version": "1.175.0"
+      "version": "1.176.1"
     },
     "spotbugs": {
       "provider": "github",
@@ -99,18 +99,18 @@
     "trufflehog": {
       "provider": "github",
       "repository": "trufflesecurity/trufflehog",
-      "version": "3.97.1",
+      "version": "3.97.4",
       "tagTemplate": "v{version}",
       "assetTemplate": "trufflehog_{version}_linux_amd64.tar.gz",
-      "sha256": "f863ea3a8d786f7d097870496c977944cce7372a2fe1e56707d965016e543ece"
+      "sha256": "dc24007c2f233bd61c05beabeb44aa27ea9b43288166279209abe0458c5ce76b"
     },
     "zizmor": {
       "provider": "github",
       "repository": "zizmorcore/zizmor",
-      "version": "1.29.0",
+      "version": "1.30.0",
       "tagTemplate": "v{version}",
       "assetTemplate": "zizmor-x86_64-unknown-linux-gnu.tar.gz",
-      "sha256": "dd96df044a6e8538d5f423790f453bdd03d49e5b2bcc38214acc41a2f1297839"
+      "sha256": "ec8c95cd800845abb9bbc5f377ec7c57d2eb8e2386a00a201d3a74ee4092e5ed"
     }
   }
 }
