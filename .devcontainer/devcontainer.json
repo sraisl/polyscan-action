@@ -1,6 +1,9 @@
 {
   "name": "polyscan-action",
   "image": "mcr.microsoft.com/devcontainers/javascript-node:24-bookworm",
+  "mounts": [
+    "source=${localEnv:HOME}${localEnv:USERPROFILE}/.gitconfig,target=/home/node/.gitconfig,type=bind,readonly"
+  ],
   "features": {
     "ghcr.io/devcontainers/features/python:1": {
       "version": "3.12"
@@ -22,6 +25,6 @@
       ]
     }
   },
-  "postCreateCommand": "npm ci && gh extension install github/gh-copilot",
+  "postCreateCommand": "npm ci",
   "remoteUser": "node"
 }
