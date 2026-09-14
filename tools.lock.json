@@ -70,15 +70,15 @@
     "opengrep": {
       "provider": "github",
       "repository": "opengrep/opengrep",
-      "version": "1.29.0",
+      "version": "1.30.0",
       "tagTemplate": "v{version}",
       "assetTemplate": "opengrep_manylinux_x86",
-      "sha256": "3365ef49d04893e01338d85d9bbd49b2bd5261ad4c9c0df0a6a0f8d44232ae13"
+      "sha256": "35779bdd72e92129c8df2a77f0c55e8c08356801ea92591ef32108d6b28d564c"
     },
     "semgrep": {
       "provider": "pypi",
       "package": "semgrep",
-      "version": "1.176.1"
+      "version": "1.177.0"
     },
     "spotbugs": {
       "provider": "github",
@@ -107,10 +107,10 @@
     "zizmor": {
       "provider": "github",
       "repository": "zizmorcore/zizmor",
-      "version": "1.30.0",
+      "version": "1.30.1",
       "tagTemplate": "v{version}",
       "assetTemplate": "zizmor-x86_64-unknown-linux-gnu.tar.gz",
-      "sha256": "ec8c95cd800845abb9bbc5f377ec7c57d2eb8e2386a00a201d3a74ee4092e5ed"
+      "sha256": "e65324f4430c2717591937edcec90ccbefaf14c174f8ec9415e03ca875b46e1a"
     }
   }
 }
