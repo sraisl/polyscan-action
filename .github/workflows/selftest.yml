@@ -93,6 +93,7 @@ jobs:
           output-dir: ".polyscan-opengrep"
 
       - name: Assert OpenGrep findings
+        id: baseline
         env:
           TOTAL: ${{ steps.scan.outputs.total }}
           FAILED_ENGINES: ${{ steps.scan.outputs.failed-engines }}
@@ -113,16 +114,18 @@ jobs:
           const findings = sarif.runs.flatMap((run) => run.results ?? []);
           const finding = findings.find(
             (result) =>
-              result.ruleId === "opengrep/polyscan-test-eval" &&
+              result.ruleId.endsWith("polyscan-test-eval") &&
               result.properties?.engine === "opengrep",
           );
           if (!finding) {
-            throw new Error("expected deterministic OpenGrep eval finding");
+            throw new Error(`expected deterministic OpenGrep eval finding; got ${findings.map((result) => result.ruleId)}`);
           }
 
-          if (!findings.some((result) => result.ruleId === "opengrep/polyscan-test-eval-secondary")) {
+          if (!findings.some((result) => result.ruleId.endsWith("polyscan-test-eval-secondary"))) {
             throw new Error("expected second rule on the same file");
           }
+
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `rule_id=${finding.ruleId.slice("opengrep/".length)}\n`);
 
           const uri = finding.locations?.[0]?.physicalLocation?.artifactLocation?.uri;
           if (!uri?.startsWith("test-fixtures/") || uri.startsWith("/")) {
@@ -137,7 +140,7 @@ jobs:
           target: "test-fixtures"
           engines: "opengrep"
           opengrep-config: "test-fixtures/opengrep-rules.yml"
-          opengrep-exclude-rules: "polyscan-test-eval"
+          opengrep-exclude-rules: ${{ steps.baseline.outputs.rule_id }}
           gate: "false"
           sarif: "true"
           sbom: "false"
@@ -161,7 +164,7 @@ jobs:
           if (Number(process.env.TOTAL) !== 1 || findings.length !== 1) {
             throw new Error(`expected one remaining finding, got ${findings.length}`);
           }
-          if (findings[0].ruleId !== "opengrep/polyscan-test-eval-secondary") {
+          if (!findings[0].ruleId.endsWith("polyscan-test-eval-secondary")) {
             throw new Error(`unexpected remaining rule: ${findings[0].ruleId}`);
           }
           const uri = findings[0].locations?.[0]?.physicalLocation?.artifactLocation?.uri;
