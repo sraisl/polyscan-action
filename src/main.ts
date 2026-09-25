@@ -26,6 +26,7 @@ import { resolveEngines, unknownEngines, SUPPORTED_ENGINES } from "./engines";
 import { normalizeFindingPath, resolveOutputDir, resolveTarget } from "./target";
 import { assertSupportedPlatform } from "./tools";
 import { mapConcurrentWithBarriers, parseMaxConcurrency } from "./scheduler";
+import { parseExcludedRules } from "./rule-exclusions";
 
 const DEFAULT_MAX_CONCURRENCY = 2;
 
@@ -55,6 +56,8 @@ interface ActionConfig {
   outputDir: string;
   trivyImage?: string;
   opengrepConfig: string;
+  semgrepExcludeRules: string[];
+  opengrepExcludeRules: string[];
   gate: {
     maxCritical: number;
     maxHigh: number;
@@ -88,6 +91,8 @@ function readConfig(): ActionConfig {
     outputDir: resolveOutputDir(core.getInput("output-dir") || "."),
     trivyImage: core.getInput("trivy-image") || undefined,
     opengrepConfig: core.getInput("opengrep-config") || "auto",
+    semgrepExcludeRules: parseExcludedRules(core.getInput("semgrep-exclude-rules")),
+    opengrepExcludeRules: parseExcludedRules(core.getInput("opengrep-exclude-rules")),
     gate: {
       maxCritical: intInput("max-critical", 0),
       maxHigh: intInput("max-high", 0),
@@ -101,13 +106,15 @@ async function runEngine(
   target: string,
   trivyImage: string | undefined,
   opengrepConfig: string,
+  semgrepExcludeRules: string[],
+  opengrepExcludeRules: string[],
 ): Promise<EngineResult> {
   try {
     switch (name) {
       case "semgrep":
-        return await runSemgrep(target);
+        return await runSemgrep(target, semgrepExcludeRules);
       case "opengrep":
-        return await runOpengrep(target, opengrepConfig);
+        return await runOpengrep(target, opengrepConfig, opengrepExcludeRules);
       case "bandit":
         return await runBandit(target);
       case "eslint":
@@ -173,6 +180,8 @@ async function runEngines(config: ActionConfig): Promise<EngineResult[]> {
         config.target,
         config.trivyImage,
         config.opengrepConfig,
+        config.semgrepExcludeRules,
+        config.opengrepExcludeRules,
       );
       normalizeEngineFindings(result, config.target);
       const elapsedSeconds = ((Date.now() - startedAt) / 1000).toFixed(1);

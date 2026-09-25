@@ -16,7 +16,22 @@ export function parseSemgrepJson(stdout: string): Finding[] {
   return parseSemgrepCompatibleJson(stdout, "semgrep", "semgrep-rule", "Semgrep finding");
 }
 
-export async function runSemgrep(target: string): Promise<EngineResult> {
+export function semgrepArgs(target: string, excludedRules: readonly string[] = []): string[] {
+  return [
+    "--config",
+    "auto",
+    ...excludedRules.flatMap((rule) => ["--exclude-rule", rule]),
+    "--json",
+    "--quiet",
+    "--no-git-ignore",
+    target,
+  ];
+}
+
+export async function runSemgrep(
+  target: string,
+  excludedRules: readonly string[] = [],
+): Promise<EngineResult> {
   const tool = await ensureInstalled();
   if (!tool) {
     return { engine: "semgrep", findings: [], status: "failed", note: "semgrep not installed" };
@@ -24,14 +39,7 @@ export async function runSemgrep(target: string): Promise<EngineResult> {
   try {
     const abs = resolveTarget(target);
 
-    const res = await run(tool.executable, [
-      "--config",
-      "auto",
-      "--json",
-      "--quiet",
-      "--no-git-ignore",
-      abs,
-    ]);
+    const res = await run(tool.executable, semgrepArgs(abs, excludedRules));
     if (res.exitCode !== 0) {
       return {
         engine: "semgrep",

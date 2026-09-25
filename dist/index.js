@@ -88886,6 +88886,7 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.parseOpengrepJson = parseOpengrepJson;
+exports.opengrepArgs = opengrepArgs;
 exports.runOpengrep = runOpengrep;
 // OpenGrep engine adapter — downloads a pinned standalone binary and parses
 // Semgrep-compatible JSON output.
@@ -88923,20 +88924,24 @@ async function ensureOpengrep() {
         return null;
     }
 }
-async function runOpengrep(target, config) {
+function opengrepArgs(target, config, excludedRules = []) {
+    return [
+        "scan",
+        "--config",
+        config,
+        ...excludedRules.flatMap((rule) => ["--exclude-rule", rule]),
+        "--json",
+        "--quiet",
+        "--no-git-ignore",
+        target,
+    ];
+}
+async function runOpengrep(target, config, excludedRules = []) {
     const executable = await ensureOpengrep();
     if (!executable) {
         return { engine: "opengrep", findings: [], status: "failed", note: "opengrep not installed" };
     }
-    const result = await (0, exec_1.run)(executable, [
-        "scan",
-        "--config",
-        config,
-        "--json",
-        "--quiet",
-        "--no-git-ignore",
-        (0, target_1.resolveTarget)(target),
-    ]);
+    const result = await (0, exec_1.run)(executable, opengrepArgs((0, target_1.resolveTarget)(target), config, excludedRules));
     if (result.exitCode !== 0) {
         return {
             engine: "opengrep",
@@ -89056,6 +89061,7 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.parseSemgrepJson = parseSemgrepJson;
+exports.semgrepArgs = semgrepArgs;
 exports.runSemgrep = runSemgrep;
 // Semgrep engine adapter — installs via pip if missing, runs with auto config.
 const core = __importStar(__nccwpck_require__(37484));
@@ -89070,21 +89076,25 @@ async function ensureInstalled() {
 function parseSemgrepJson(stdout) {
     return (0, semgrep_json_1.parseSemgrepCompatibleJson)(stdout, "semgrep", "semgrep-rule", "Semgrep finding");
 }
-async function runSemgrep(target) {
+function semgrepArgs(target, excludedRules = []) {
+    return [
+        "--config",
+        "auto",
+        ...excludedRules.flatMap((rule) => ["--exclude-rule", rule]),
+        "--json",
+        "--quiet",
+        "--no-git-ignore",
+        target,
+    ];
+}
+async function runSemgrep(target, excludedRules = []) {
     const tool = await ensureInstalled();
     if (!tool) {
         return { engine: "semgrep", findings: [], status: "failed", note: "semgrep not installed" };
     }
     try {
         const abs = (0, target_1.resolveTarget)(target);
-        const res = await (0, exec_1.run)(tool.executable, [
-            "--config",
-            "auto",
-            "--json",
-            "--quiet",
-            "--no-git-ignore",
-            abs,
-        ]);
+        const res = await (0, exec_1.run)(tool.executable, semgrepArgs(abs, excludedRules));
         if (res.exitCode !== 0) {
             return {
                 engine: "semgrep",
@@ -90179,6 +90189,7 @@ const engines_1 = __nccwpck_require__(62616);
 const target_1 = __nccwpck_require__(76746);
 const tools_1 = __nccwpck_require__(51732);
 const scheduler_1 = __nccwpck_require__(5622);
+const rule_exclusions_1 = __nccwpck_require__(19715);
 const DEFAULT_MAX_CONCURRENCY = 2;
 function boolInput(name, def) {
     const raw = core.getInput(name);
@@ -90212,6 +90223,8 @@ function readConfig() {
         outputDir: (0, target_1.resolveOutputDir)(core.getInput("output-dir") || "."),
         trivyImage: core.getInput("trivy-image") || undefined,
         opengrepConfig: core.getInput("opengrep-config") || "auto",
+        semgrepExcludeRules: (0, rule_exclusions_1.parseExcludedRules)(core.getInput("semgrep-exclude-rules")),
+        opengrepExcludeRules: (0, rule_exclusions_1.parseExcludedRules)(core.getInput("opengrep-exclude-rules")),
         gate: {
             maxCritical: intInput("max-critical", 0),
             maxHigh: intInput("max-high", 0),
@@ -90219,13 +90232,13 @@ function readConfig() {
         },
     };
 }
-async function runEngine(name, target, trivyImage, opengrepConfig) {
+async function runEngine(name, target, trivyImage, opengrepConfig, semgrepExcludeRules, opengrepExcludeRules) {
     try {
         switch (name) {
             case "semgrep":
-                return await (0, semgrep_1.runSemgrep)(target);
+                return await (0, semgrep_1.runSemgrep)(target, semgrepExcludeRules);
             case "opengrep":
-                return await (0, opengrep_1.runOpengrep)(target, opengrepConfig);
+                return await (0, opengrep_1.runOpengrep)(target, opengrepConfig, opengrepExcludeRules);
             case "bandit":
                 return await (0, bandit_1.runBandit)(target);
             case "eslint":
@@ -90278,7 +90291,7 @@ async function runEngines(config) {
     return (0, scheduler_1.mapConcurrentWithBarriers)(config.engines, config.maxConcurrency, (engine) => engine === "spotbugs", async (engine) => {
         core.info(`[${engine}] started`);
         const startedAt = Date.now();
-        const result = await runEngine(engine, config.target, config.trivyImage, config.opengrepConfig);
+        const result = await runEngine(engine, config.target, config.trivyImage, config.opengrepConfig, config.semgrepExcludeRules, config.opengrepExcludeRules);
         normalizeEngineFindings(result, config.target);
         const elapsedSeconds = ((Date.now() - startedAt) / 1000).toFixed(1);
         core.info(`[${engine}] completed in ${elapsedSeconds}s: ${result.findings.length} findings ` +
@@ -90394,6 +90407,20 @@ async function main() {
 main().catch((err) => {
     core.setFailed(`PolyScan crashed: ${err instanceof Error ? err.stack : String(err)}`);
 });
+
+
+/***/ }),
+
+/***/ 19715:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.parseExcludedRules = parseExcludedRules;
+function parseExcludedRules(input) {
+    return [...new Set(input.split(",").map((rule) => rule.trim()).filter(Boolean))];
+}
 
 
 /***/ }),
