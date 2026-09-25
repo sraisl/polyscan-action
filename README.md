@@ -102,18 +102,20 @@ Python engines are installed into isolated, version-pinned environments. OpenGre
 
 `opengrep-config: "auto"` loads OpenGrep's automatic rules configuration and can require network access. Use a repository-local rule file, for example `opengrep-config: ".opengrep/rules.yml"`, for deterministic and offline-friendly scans.
 
-To skip individual rules while continuing to scan the same files with other rules, configure each scanner separately:
+For example, suppose the summary reports Semgrep's
+`yaml.github-actions.security.github-actions-mutable-action-tag.github-actions-mutable-action-tag`
+rule for a workflow that intentionally uses version tags such as `actions/checkout@v4`.
+Copy that full ID into `semgrep-exclude-rules`:
 
 ```yaml
 - uses: sraisl/polyscan-action@v16
   with:
     engines: "semgrep,opengrep"
     opengrep-config: "auto"
-    semgrep-exclude-rules: "rule.id.one,rule.id.two"
-    opengrep-exclude-rules: "rule.id.three"
+    semgrep-exclude-rules: "yaml.github-actions.security.github-actions-mutable-action-tag.github-actions-mutable-action-tag"
 ```
 
-Use the full rule IDs shown in the summary's Findings table. Spaces around commas and empty entries are ignored. Leaving either input empty leaves that scanner's rules unchanged.
+Semgrep still scans the workflow for other rules, and OpenGrep remains unchanged. If an OpenGrep finding should also be excluded, add `opengrep-exclude-rules` with the full ID from its own summary row. Both inputs accept multiple comma-separated IDs; spaces around commas and empty entries are ignored. Leaving an input empty leaves that scanner's rules unchanged.
 
 trufflehog is opt-in because, unlike every other engine, its verification step makes live network calls to each credential's own provider API to confirm it actually works — a deliberately different (and non-deterministic, network-dependent) posture than the rest of PolyScan's offline scans. No extra token or permission is required: verification authenticates using the discovered credential itself, not a token supplied by PolyScan.
 
