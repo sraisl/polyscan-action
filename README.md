@@ -113,7 +113,7 @@ To skip individual rules while continuing to scan the same files with other rule
     opengrep-exclude-rules: "rule.id.three"
 ```
 
-Use the full rule IDs reported by each scanner. Spaces around commas and empty entries are ignored. Leaving either input empty leaves that scanner's rules unchanged.
+Use the full rule IDs shown in the summary's Findings table. Spaces around commas and empty entries are ignored. Leaving either input empty leaves that scanner's rules unchanged.
 
 trufflehog is opt-in because, unlike every other engine, its verification step makes live network calls to each credential's own provider API to confirm it actually works — a deliberately different (and non-deterministic, network-dependent) posture than the rest of PolyScan's offline scans. No extra token or permission is required: verification authenticates using the discovered credential itself, not a token supplied by PolyScan.
 

@@ -19,7 +19,7 @@ test("parseOpengrepJson maps OpenGrep findings to the normalized schema", () => 
 
   assert.deepEqual(finding, {
     engine: "opengrep",
-    ruleId: "eval-injection",
+    ruleId: BASE.check_id,
     severity: "high",
     message: "Use of eval detected",
     file: "src/app.py",
