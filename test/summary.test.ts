@@ -4,6 +4,8 @@ import assert from "node:assert/strict";
 import { renderSummary } from "../src/summary";
 import { countBySeverity, EngineResult, Finding } from "../src/schema";
 import { evaluateGate } from "../src/gate";
+import { parseSemgrepJson } from "../src/engines/semgrep";
+import { parseOpengrepJson } from "../src/engines/opengrep";
 
 test("renderSummary shows engine states and escapes dynamic table content", () => {
   const findings: Finding[] = [
@@ -38,6 +40,25 @@ function renderFor(finding: Finding): string {
   const gate = evaluateGate([finding], { maxCritical: 0, maxHigh: 0, maxMedium: 50 });
   return renderSummary([finding], counts, gate, true, engines);
 }
+
+test("renderSummary shows full Semgrep and OpenGrep rule IDs from scanner output", () => {
+  const checkId = "rules.python.lang.security.eval-injection";
+  const stdout = JSON.stringify({
+    results: [{
+      check_id: checkId,
+      path: "app.py",
+      start: { line: 10 },
+      extra: { severity: "ERROR", message: "Use of eval detected" },
+    }],
+  });
+
+  for (const parse of [parseSemgrepJson, parseOpengrepJson]) {
+    const [finding] = parse(stdout);
+    const summary = renderFor(finding);
+    assert.ok(summary.includes("| `" + checkId + "` |"));
+    assert.doesNotMatch(summary, /\| `eval-injection` \|/);
+  }
+});
 
 test("renderSummary links hadolint DL rules to the hadolint wiki", () => {
   const summary = renderFor({

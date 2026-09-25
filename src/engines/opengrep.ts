@@ -44,21 +44,34 @@ async function ensureOpengrep(): Promise<string | null> {
   }
 }
 
-export async function runOpengrep(target: string, config: string): Promise<EngineResult> {
+export function opengrepArgs(
+  target: string,
+  config: string,
+  excludedRules: readonly string[] = [],
+): string[] {
+  return [
+    "scan",
+    "--config",
+    config,
+    ...excludedRules.flatMap((rule) => ["--exclude-rule", rule]),
+    "--json",
+    "--quiet",
+    "--no-git-ignore",
+    target,
+  ];
+}
+
+export async function runOpengrep(
+  target: string,
+  config: string,
+  excludedRules: readonly string[] = [],
+): Promise<EngineResult> {
   const executable = await ensureOpengrep();
   if (!executable) {
     return { engine: "opengrep", findings: [], status: "failed", note: "opengrep not installed" };
   }
 
-  const result = await run(executable, [
-    "scan",
-    "--config",
-    config,
-    "--json",
-    "--quiet",
-    "--no-git-ignore",
-    resolveTarget(target),
-  ]);
+  const result = await run(executable, opengrepArgs(resolveTarget(target), config, excludedRules));
   if (result.exitCode !== 0) {
     return {
       engine: "opengrep",

@@ -27,7 +27,7 @@ export function parseSemgrepCompatibleJson(
     const cwe = Array.isArray(cweRaw) ? cweRaw[0] : cweRaw;
     findings.push({
       engine,
-      ruleId: String(result.check_id ?? fallbackRuleId).split(".").pop() || fallbackRuleId,
+      ruleId: String(result.check_id ?? fallbackRuleId) || fallbackRuleId,
       severity: mapSeverity(result.extra?.severity),
       message: result.extra?.message?.trim() || fallbackMessage,
       file: result.path,

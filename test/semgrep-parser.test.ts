@@ -10,11 +10,11 @@ const BASE = {
   extra: { severity: "ERROR", message: "  Use of eval detected  ", metadata: {} },
 };
 
-test("parseSemgrepJson: ERROR maps to high, trims message, uses last ruleId segment", () => {
+test("parseSemgrepJson: ERROR maps to high, trims message, preserves full rule ID", () => {
   const stdout = JSON.stringify({ results: [BASE] });
   const [f] = parseSemgrepJson(stdout);
   assert.equal(f.engine, "semgrep");
-  assert.equal(f.ruleId, "eval-injection");
+  assert.equal(f.ruleId, BASE.check_id);
   assert.equal(f.severity, "high");
   assert.equal(f.message, "Use of eval detected");
   assert.equal(f.file, "app.py");

@@ -51,6 +51,8 @@ jobs:
 | `target` | `.` | Workspace-contained directory to scan |
 | `engines` | `all` | `all` or comma-separated engines: `semgrep,opengrep,bandit,eslint,spotbugs,trivy,detekt,gitleaks,betterleaks,gosec,hadolint,zizmor,trufflehog`. OpenGrep and trufflehog are opt-in and are not included by `all`. |
 | `opengrep-config` | `auto` | OpenGrep rules config: `auto`, a local path, URL, or registry ID |
+| `semgrep-exclude-rules` | _(empty)_ | Comma-separated Semgrep rule IDs to exclude; other rules still scan the same files |
+| `opengrep-exclude-rules` | _(empty)_ | Comma-separated OpenGrep rule IDs to exclude; other rules still scan the same files |
 | `max-concurrency` | `2` | Maximum concurrent read-only engines (`1`-`10`); SpotBugs runs as a serial barrier |
 | `max-critical` | `0` | Max critical findings before the gate fails |
 | `max-high` | `0` | Max high findings before the gate fails |
@@ -99,6 +101,21 @@ Python engines are installed into isolated, version-pinned environments. OpenGre
 **Default: `engines: "all"` expands to** `semgrep,bandit,eslint,spotbugs,trivy,detekt,gitleaks,betterleaks,gosec,hadolint,zizmor`. Each language-specific engine (gosec, detekt, hadolint, zizmor, …) runs a quick file-presence check and is skipped with no findings and no download when its file type isn't present, so `all` stays cheap on repositories that don't use that language. OpenGrep and trufflehog are explicit opt-ins and can be selected with `engines: "opengrep,trufflehog"` or combined with other engines.
 
 `opengrep-config: "auto"` loads OpenGrep's automatic rules configuration and can require network access. Use a repository-local rule file, for example `opengrep-config: ".opengrep/rules.yml"`, for deterministic and offline-friendly scans.
+
+For example, suppose the summary reports Semgrep's
+`yaml.github-actions.security.github-actions-mutable-action-tag.github-actions-mutable-action-tag`
+rule for a workflow that intentionally uses version tags such as `actions/checkout@v4`.
+Copy that full ID into `semgrep-exclude-rules`:
+
+```yaml
+- uses: sraisl/polyscan-action@v16
+  with:
+    engines: "semgrep,opengrep"
+    opengrep-config: "auto"
+    semgrep-exclude-rules: "yaml.github-actions.security.github-actions-mutable-action-tag.github-actions-mutable-action-tag"
+```
+
+Semgrep still scans the workflow for other rules, and OpenGrep remains unchanged. If an OpenGrep finding should also be excluded, add `opengrep-exclude-rules` with the full ID from its own summary row. Both inputs accept multiple comma-separated IDs; spaces around commas and empty entries are ignored. Leaving an input empty leaves that scanner's rules unchanged.
 
 trufflehog is opt-in because, unlike every other engine, its verification step makes live network calls to each credential's own provider API to confirm it actually works — a deliberately different (and non-deterministic, network-dependent) posture than the rest of PolyScan's offline scans. No extra token or permission is required: verification authenticates using the discovered credential itself, not a token supplied by PolyScan.
 
@@ -169,10 +186,11 @@ Releases are tagged as semver (`vX.Y.Z`) with a floating major tag (e.g. `v16`) 
 
 Releases are cut manually via the `Release` workflow (`.github/workflows/release.yml`):
 
-1. On the Actions tab, run the `Release` workflow (`workflow_dispatch`) against `main`.
-2. It checks out `main`, runs typecheck/tests, rebuilds `dist/` and verifies it matches what's committed.
-3. It computes the next `vN` tag (highest existing `vN` + 1), tags `main`, and pushes **only the tag** — `main` is branch-protected and is never pushed to by this workflow.
-4. Consumers pin `sraisl/polyscan-action@vN` to that tag (see [Usage](#usage)).
+1. Merge the release changes into `main` after CI and the Self Test pass.
+2. On the Actions tab, run the `Release` workflow (`workflow_dispatch`) against `main` and choose a `patch`, `minor`, or `major` bump.
+3. The workflow checks out current `main`, runs typecheck/tests, rebuilds `dist/` and verifies it matches what's committed.
+4. It creates the next `vX.Y.Z` tag and moves the floating `vX` tag to the same commit, pushing **only the tags** — `main` is branch-protected and is never pushed to by this workflow.
+5. Consumers pin `sraisl/polyscan-action@vX` for updates within a major version or `@vX.Y.Z` for an exact release (see [Usage](#usage)).
 
 If `dist/` doesn't match a fresh build, the workflow fails — merge a PR that rebuilds and commits `dist/` before releasing.
 

@@ -13,6 +13,25 @@ tags and must not be reused or moved.
 
 ## [Unreleased]
 
+## [v16.1.0] - 2026-09-25
+
+### Added
+
+- Optional `semgrep-exclude-rules` and `opengrep-exclude-rules` inputs suppress individual
+  scanner rules while the remaining rules continue to scan the same files.
+
+### Changed
+
+- Semgrep and OpenGrep findings retain their full rule IDs in the job summary and SARIF,
+  so IDs can be copied directly into the new exclusion inputs.
+- Updated the pinned ESLint, OpenGrep, Semgrep, trufflehog, and zizmor versions.
+
+## [v16.0.3] - 2026-09-09
+
+### Fixed
+
+- Rebuilt the committed Action bundle to match the source.
+
 ## [v16.0.2] - 2026-09-05
 
 ### Added

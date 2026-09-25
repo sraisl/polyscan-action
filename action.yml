@@ -18,6 +18,14 @@ inputs:
     description: "OpenGrep rules config: auto, local path, URL, or registry ID (used only when opengrep is selected)"
     required: false
     default: "auto"
+  semgrep-exclude-rules:
+    description: "Comma-separated Semgrep rule IDs to exclude from the scan"
+    required: false
+    default: ""
+  opengrep-exclude-rules:
+    description: "Comma-separated OpenGrep rule IDs to exclude from the scan"
+    required: false
+    default: ""
   max-concurrency:
     description: "Maximum number of read-only engines to run concurrently (1-10); SpotBugs always runs as a serial barrier"
     required: false
