@@ -120,8 +120,52 @@ jobs:
             throw new Error("expected deterministic OpenGrep eval finding");
           }
 
+          if (!findings.some((result) => result.ruleId === "opengrep/polyscan-test-eval-secondary")) {
+            throw new Error("expected second rule on the same file");
+          }
+
           const uri = finding.locations?.[0]?.physicalLocation?.artifactLocation?.uri;
           if (!uri?.startsWith("test-fixtures/") || uri.startsWith("/")) {
             throw new Error(`invalid OpenGrep SARIF path: ${uri}`);
+          }
+          NODE
+
+      - name: Run OpenGrep with one rule excluded
+        id: excluded_scan
+        uses: ./
+        with:
+          target: "test-fixtures"
+          engines: "opengrep"
+          opengrep-config: "test-fixtures/opengrep-rules.yml"
+          opengrep-exclude-rules: "polyscan-test-eval"
+          gate: "false"
+          sarif: "true"
+          sbom: "false"
+          upload-artifacts: "false"
+          output-dir: ".polyscan-opengrep-excluded"
+
+      - name: Assert only the selected OpenGrep rule was excluded
+        env:
+          TOTAL: ${{ steps.excluded_scan.outputs.total }}
+          FAILED_ENGINES: ${{ steps.excluded_scan.outputs.failed-engines }}
+        run: |
+          node - <<'NODE'
+          const fs = require("node:fs");
+          if (process.env.FAILED_ENGINES) {
+            throw new Error(`OpenGrep failed: ${process.env.FAILED_ENGINES}`);
+          }
+          const sarif = JSON.parse(
+            fs.readFileSync(".polyscan-opengrep-excluded/polyscan.sarif", "utf8"),
+          );
+          const findings = sarif.runs.flatMap((run) => run.results ?? []);
+          if (Number(process.env.TOTAL) !== 1 || findings.length !== 1) {
+            throw new Error(`expected one remaining finding, got ${findings.length}`);
+          }
+          if (findings[0].ruleId !== "opengrep/polyscan-test-eval-secondary") {
+            throw new Error(`unexpected remaining rule: ${findings[0].ruleId}`);
+          }
+          const uri = findings[0].locations?.[0]?.physicalLocation?.artifactLocation?.uri;
+          if (uri !== "test-fixtures/vuln.py") {
+            throw new Error(`expected the same file to be scanned, got ${uri}`);
           }
           NODE

@@ -7,3 +7,9 @@ rules:
     metadata:
       cwe: CWE-95
     pattern: eval(...)
+  - id: polyscan-test-eval-secondary
+    languages:
+      - python
+    message: Dynamic eval needs review
+    severity: WARNING
+    pattern: eval(...)

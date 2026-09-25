@@ -186,10 +186,11 @@ Releases are tagged as semver (`vX.Y.Z`) with a floating major tag (e.g. `v16`) 
 
 Releases are cut manually via the `Release` workflow (`.github/workflows/release.yml`):
 
-1. On the Actions tab, run the `Release` workflow (`workflow_dispatch`) against `main`.
-2. It checks out `main`, runs typecheck/tests, rebuilds `dist/` and verifies it matches what's committed.
-3. It computes the next `vN` tag (highest existing `vN` + 1), tags `main`, and pushes **only the tag** — `main` is branch-protected and is never pushed to by this workflow.
-4. Consumers pin `sraisl/polyscan-action@vN` to that tag (see [Usage](#usage)).
+1. Merge the release changes into `main` after CI and the Self Test pass.
+2. On the Actions tab, run the `Release` workflow (`workflow_dispatch`) against `main` and choose a `patch`, `minor`, or `major` bump.
+3. The workflow checks out current `main`, runs typecheck/tests, rebuilds `dist/` and verifies it matches what's committed.
+4. It creates the next `vX.Y.Z` tag and moves the floating `vX` tag to the same commit, pushing **only the tags** — `main` is branch-protected and is never pushed to by this workflow.
+5. Consumers pin `sraisl/polyscan-action@vX` for updates within a major version or `@vX.Y.Z` for an exact release (see [Usage](#usage)).
 
 If `dist/` doesn't match a fresh build, the workflow fails — merge a PR that rebuilds and commits `dist/` before releasing.
 
