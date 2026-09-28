@@ -117,6 +117,25 @@ Copy that full ID into `semgrep-exclude-rules`:
 
 Semgrep still scans the workflow for other rules, and OpenGrep remains unchanged. If an OpenGrep finding should also be excluded, add `opengrep-exclude-rules` with the full ID from its own summary row. Both inputs accept multiple comma-separated IDs; spaces around commas and empty entries are ignored. Leaving an input empty leaves that scanner's rules unchanged.
 
+To exclude multiple rules, separate their full IDs with commas:
+
+```yaml
+with:
+  semgrep-exclude-rules: "full.rule-id-1, full.rule-id-2"
+```
+
+For longer lists, use a folded YAML string to put each ID on its own line. Keep the commas between IDs:
+
+```yaml
+with:
+  semgrep-exclude-rules: >-
+    full.rule-id-1,
+    full.rule-id-2,
+    full.rule-id-3
+```
+
+Replace the placeholders with the full rule IDs from the scan summary. The same syntax applies to `opengrep-exclude-rules`.
+
 trufflehog is opt-in because, unlike every other engine, its verification step makes live network calls to each credential's own provider API to confirm it actually works — a deliberately different (and non-deterministic, network-dependent) posture than the rest of PolyScan's offline scans. No extra token or permission is required: verification authenticates using the discovered credential itself, not a token supplied by PolyScan.
 
 Read-only engines run with bounded concurrency (`max-concurrency`, default `2`). SpotBugs may invoke a project build and therefore runs as a serial barrier: all earlier engines finish before it starts, and later engines start only after it completes.
