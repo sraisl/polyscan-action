@@ -14,6 +14,10 @@ inputs:
     description: "Comma-separated engines to run, or 'all': semgrep,opengrep,bandit,eslint,spotbugs,trivy,detekt,gitleaks,betterleaks,gosec,hadolint,zizmor,trufflehog (all excludes opt-in opengrep and trufflehog)"
     required: false
     default: "all"
+  allow-risky-engines:
+    description: "Run engines that execute repository code or contact third-party APIs (spotbugs, trufflehog) even on pull requests from forks. Leave false unless the workflow is known to handle untrusted code safely."
+    required: false
+    default: "false"
   opengrep-config:
     description: "OpenGrep rules config: auto, local path, URL, or registry ID (used only when opengrep is selected)"
     required: false
@@ -94,6 +98,10 @@ outputs:
     description: "'true' if every requested engine completed or was skipped as not applicable"
   failed-engines:
     description: "Comma-separated engines that failed to complete"
+  untrusted-run:
+    description: "'true' if the workspace holds code from a fork (pull request from a forked repository)"
+  skipped-risky-engines:
+    description: "Comma-separated engines that safe mode withheld because the run is untrusted"
   sarif-file:
     description: "Path to the generated SARIF file (if any)"
   sbom-file:

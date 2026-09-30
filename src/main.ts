@@ -22,7 +22,14 @@ import { evaluateGate } from "./gate";
 import { toSarif } from "./sarif";
 import { toSbom } from "./sbom";
 import { renderSummary } from "./summary";
-import { resolveEngines, unknownEngines, SUPPORTED_ENGINES } from "./engines";
+import {
+  resolveEngines,
+  selectEnginesForRun,
+  unknownEngines,
+  SkippedEngine,
+  SUPPORTED_ENGINES,
+} from "./engines";
+import { isUntrustedRun, RunTrust } from "./untrusted";
 import { normalizeFindingPath, resolveOutputDir, resolveTarget } from "./target";
 import { assertSupportedPlatform } from "./tools";
 import { mapConcurrentWithBarriers, parseMaxConcurrency } from "./scheduler";
@@ -46,6 +53,10 @@ function intInput(name: string, def: number): number {
 interface ActionConfig {
   target: string;
   engines: string[];
+  // Engines safe mode withheld because the run is untrusted.
+  skippedEngines: SkippedEngine[];
+  allowRiskyEngines: boolean;
+  trust: RunTrust;
   gateEnforced: boolean;
   failOnEngineError: boolean;
   wantSarif: boolean;
@@ -66,17 +77,27 @@ interface ActionConfig {
 }
 
 function readConfig(): ActionConfig {
-  const engines = resolveEngines(core.getInput("engines"));
-  const unknown = unknownEngines(engines);
+  const requested = resolveEngines(core.getInput("engines"));
+  const unknown = unknownEngines(requested);
   if (unknown.length > 0) {
     throw new Error(
       `Unknown engine(s): ${unknown.join(", ")}. Valid engines: ${SUPPORTED_ENGINES.join(", ")}`,
     );
   }
 
+  const trust = isUntrustedRun();
+  const allowRiskyEngines = boolInput("allow-risky-engines", false);
+  const selection = selectEnginesForRun(requested, {
+    untrusted: trust.untrusted,
+    allowRisky: allowRiskyEngines,
+  });
+
   return {
     target: resolveTarget(core.getInput("target") || "."),
-    engines,
+    engines: selection.engines,
+    skippedEngines: selection.skipped,
+    allowRiskyEngines,
+    trust,
     gateEnforced: boolInput("gate", true),
     failOnEngineError: boolInput("fail-on-engine-error", true),
     wantSarif: boolInput("sarif", true),
@@ -195,6 +216,39 @@ async function runEngines(config: ActionConfig): Promise<EngineResult[]> {
   );
 }
 
+// Reports safe mode's decision and turns each withheld engine into a "skipped"
+// result, so the job summary and the engine outputs account for it instead of
+// silently dropping it from the run.
+function reportSafeMode(config: ActionConfig): EngineResult[] {
+  if (config.trust.advisory) core.warning(config.trust.advisory);
+
+  if (config.skippedEngines.length === 0) {
+    if (config.trust.untrusted && config.allowRiskyEngines) {
+      core.warning(
+        `Untrusted run (${config.trust.reason}), but 'allow-risky-engines: true' is set — ` +
+          "engines that execute repository code are not being withheld.",
+      );
+    } else if (config.trust.untrusted) {
+      core.info(`Untrusted run (${config.trust.reason}) — no risky engines were requested.`);
+    }
+    return [];
+  }
+
+  core.warning(
+    `Safe mode: skipping ${config.skippedEngines.map((s) => s.engine).join(", ")} because this ` +
+      `is an untrusted run (${config.trust.reason}). Set 'allow-risky-engines: true' to run them anyway.`,
+  );
+  return config.skippedEngines.map((skipped) => {
+    core.info(`[${skipped.engine}] skipped by safe mode: ${skipped.reason}`);
+    return {
+      engine: skipped.engine,
+      findings: [],
+      status: "skipped" as const,
+      note: `skipped by safe mode: ${skipped.reason}`,
+    };
+  });
+}
+
 function sortedFindings(engineResults: EngineResult[]): Finding[] {
   const findings = engineResults.flatMap((result) => result.findings);
   const rank: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
@@ -250,11 +304,17 @@ async function uploadReports(files: string[], outputDir: string): Promise<void> 
 }
 
 function setOutputs(
+  config: ActionConfig,
   findings: Finding[],
   engineResults: EngineResult[],
   gatePassed: boolean,
 ): EngineResult[] {
   const counts = countBySeverity(findings);
+  core.setOutput("untrusted-run", String(config.trust.untrusted));
+  core.setOutput(
+    "skipped-risky-engines",
+    config.skippedEngines.map((skipped) => skipped.engine).join(","),
+  );
   core.setOutput("total", String(counts.total));
   core.setOutput("critical", String(counts.critical));
   core.setOutput("high", String(counts.high));
@@ -300,8 +360,9 @@ async function main(): Promise<void> {
   assertSupportedPlatform();
   const config = readConfig();
   core.info(`PolyScan scanning "${config.target}" with engines: ${config.engines.join(", ")}`);
+  const skippedResults = reportSafeMode(config);
 
-  const engineResults = await runEngines(config);
+  const engineResults = [...(await runEngines(config)), ...skippedResults];
   const findings = sortedFindings(engineResults);
   const counts = countBySeverity(findings);
   const gate = evaluateGate(findings, config.gate);
@@ -319,7 +380,7 @@ async function main(): Promise<void> {
     );
   }
 
-  const failedEngines = setOutputs(findings, engineResults, gate.passed);
+  const failedEngines = setOutputs(config, findings, engineResults, gate.passed);
   enforceResults(failedEngines, config.failOnEngineError, config.gateEnforced, gate);
 }
 

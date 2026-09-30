@@ -66,6 +66,65 @@ jobs:
         with:
           sarif_file: polyscan.sarif
 
+  safe-mode-selftest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      # A fixed, literal payload — nothing from the triggering event is
+      # interpolated into it, so a contributor cannot steer this step.
+      - name: Write a synthetic forked pull request event payload
+        run: |
+          cat > "$RUNNER_TEMP/fork-event.json" <<'JSON'
+          {
+            "pull_request": {
+              "head": { "repo": { "full_name": "outside-contributor/polyscan-action", "fork": true } },
+              "base": { "repo": { "full_name": "sraisl/polyscan-action", "fork": false } }
+            }
+          }
+          JSON
+
+      - name: Run PolyScan as if triggered by a pull request from a fork
+        id: scan
+        env:
+          GITHUB_EVENT_NAME: pull_request
+          GITHUB_EVENT_PATH: ${{ runner.temp }}/fork-event.json
+        uses: ./
+        with:
+          target: "test-fixtures"
+          engines: "spotbugs,trufflehog,hadolint"
+          gate: "false"          # fixtures are intentionally vulnerable
+          sarif: "false"
+          sbom: "false"
+          upload-artifacts: "false"
+
+      - name: Assert safe mode withheld the risky engines
+        env:
+          UNTRUSTED: ${{ steps.scan.outputs.untrusted-run }}
+          SKIPPED: ${{ steps.scan.outputs.skipped-risky-engines }}
+          FAILED_ENGINES: ${{ steps.scan.outputs.failed-engines }}
+          ENGINES_PASSED: ${{ steps.scan.outputs.engines-passed }}
+        run: |
+          echo "untrusted-run=$UNTRUSTED"
+          echo "skipped-risky-engines=$SKIPPED"
+          if [[ "$UNTRUSTED" != "true" ]]; then
+            echo "::error::expected the forked-PR payload to be detected as an untrusted run"
+            exit 1
+          fi
+          if [[ "$SKIPPED" != "spotbugs,trufflehog" ]]; then
+            echo "::error::expected spotbugs,trufflehog to be skipped, got '$SKIPPED'"
+            exit 1
+          fi
+          # The non-risky engine must still have run, and skipping is not a failure.
+          if [[ -n "$FAILED_ENGINES" ]]; then
+            echo "::error::engines failed on an untrusted run: $FAILED_ENGINES"
+            exit 1
+          fi
+          if [[ "$ENGINES_PASSED" != "true" ]]; then
+            echo "::error::expected engines-passed=true, got '$ENGINES_PASSED'"
+            exit 1
+          fi
+
   opengrep-selftest:
     runs-on: ubuntu-latest
     steps:
