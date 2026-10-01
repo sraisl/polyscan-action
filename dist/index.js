@@ -90218,6 +90218,7 @@ function readConfig() {
         wantSarif: boolInput("sarif", true),
         wantSbom: boolInput("sbom", false),
         uploadArtifacts: boolInput("upload-artifacts", true),
+        artifactName: core.getInput("artifact-name") || "polyscan-reports",
         uploadSarif: boolInput("upload-sarif", false),
         maxConcurrency: (0, scheduler_1.parseMaxConcurrency)(core.getInput("max-concurrency"), DEFAULT_MAX_CONCURRENCY, engines_1.SUPPORTED_ENGINES.length),
         outputDir: (0, target_1.resolveOutputDir)(core.getInput("output-dir") || "."),
@@ -90337,14 +90338,16 @@ async function publishSummary(summary) {
         core.warning(`could not write job summary: ${String(err).slice(0, 150)}`);
     }
 }
-async function uploadReports(files, outputDir) {
+async function uploadReports(name, files, outputDir) {
     try {
         const client = new artifact_1.DefaultArtifactClient();
-        await client.uploadArtifact("polyscan-reports", files, outputDir, { retentionDays: 30 });
-        core.info(`Uploaded ${files.length} report artifact(s).`);
+        await client.uploadArtifact(name, files, outputDir, { retentionDays: 30 });
+        core.info(`Uploaded ${files.length} report artifact(s) as "${name}".`);
     }
     catch (err) {
-        core.warning(`artifact upload failed: ${String(err).slice(0, 200)}`);
+        core.warning(`artifact upload failed: ${String(err).slice(0, 200)} ` +
+            "(if this is a 409 conflict, set a unique 'artifact-name' input when running PolyScan " +
+            "more than once in the same workflow run)");
     }
 }
 function setOutputs(findings, engineResults, gatePassed) {
@@ -90395,7 +90398,7 @@ async function main() {
     await publishSummary(summary);
     const reports = writeReports(config, findings, summary);
     if (config.uploadArtifacts && reports.files.length > 0) {
-        await uploadReports(reports.files, config.outputDir);
+        await uploadReports(config.artifactName, reports.files, config.outputDir);
     }
     if (config.uploadSarif && reports.sarifPath) {
         core.info("upload-sarif=true: use a follow-up 'github/codeql-action/upload-sarif' step " +

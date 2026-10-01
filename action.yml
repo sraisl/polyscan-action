@@ -62,6 +62,10 @@ inputs:
     description: "Upload SARIF + SBOM as workflow artifacts"
     required: false
     default: "true"
+  artifact-name:
+    description: "Name for the uploaded report artifact. Override with a unique value (e.g. include matrix/job name) when running PolyScan more than once in the same workflow run to avoid a 409 'artifact already exists' conflict"
+    required: false
+    default: "polyscan-reports"
   upload-sarif:
     description: "Emit a hint for uploading SARIF to GitHub code scanning (needs a follow-up upload-sarif step)"
     required: false

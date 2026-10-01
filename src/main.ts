@@ -51,6 +51,7 @@ interface ActionConfig {
   wantSarif: boolean;
   wantSbom: boolean;
   uploadArtifacts: boolean;
+  artifactName: string;
   uploadSarif: boolean;
   maxConcurrency: number;
   outputDir: string;
@@ -82,6 +83,7 @@ function readConfig(): ActionConfig {
     wantSarif: boolInput("sarif", true),
     wantSbom: boolInput("sbom", false),
     uploadArtifacts: boolInput("upload-artifacts", true),
+    artifactName: core.getInput("artifact-name") || "polyscan-reports",
     uploadSarif: boolInput("upload-sarif", false),
     maxConcurrency: parseMaxConcurrency(
       core.getInput("max-concurrency"),
@@ -239,13 +241,17 @@ async function publishSummary(summary: string): Promise<void> {
   }
 }
 
-async function uploadReports(files: string[], outputDir: string): Promise<void> {
+async function uploadReports(name: string, files: string[], outputDir: string): Promise<void> {
   try {
     const client = new DefaultArtifactClient();
-    await client.uploadArtifact("polyscan-reports", files, outputDir, { retentionDays: 30 });
-    core.info(`Uploaded ${files.length} report artifact(s).`);
+    await client.uploadArtifact(name, files, outputDir, { retentionDays: 30 });
+    core.info(`Uploaded ${files.length} report artifact(s) as "${name}".`);
   } catch (err) {
-    core.warning(`artifact upload failed: ${String(err).slice(0, 200)}`);
+    core.warning(
+      `artifact upload failed: ${String(err).slice(0, 200)} ` +
+        "(if this is a 409 conflict, set a unique 'artifact-name' input when running PolyScan " +
+        "more than once in the same workflow run)",
+    );
   }
 }
 
@@ -310,7 +316,7 @@ async function main(): Promise<void> {
   await publishSummary(summary);
   const reports = writeReports(config, findings, summary);
   if (config.uploadArtifacts && reports.files.length > 0) {
-    await uploadReports(reports.files, config.outputDir);
+    await uploadReports(config.artifactName, reports.files, config.outputDir);
   }
   if (config.uploadSarif && reports.sarifPath) {
     core.info(
