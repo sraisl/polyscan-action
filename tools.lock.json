@@ -9,10 +9,10 @@
     "betterleaks": {
       "provider": "github",
       "repository": "betterleaks/betterleaks",
-      "version": "1.8.1",
+      "version": "1.9.0",
       "tagTemplate": "v{version}",
       "assetTemplate": "betterleaks_{version}_linux_x64.tar.gz",
-      "sha256": "efa407244e1ea8e35f582b8a42becdeac08bdead04f68eb752adda722d583c2a"
+      "sha256": "f8b185a39ffcece2a1ca82bf3a4e7435cd81963ffd16b7a9128daf75f35f6de7"
     },
     "detekt": {
       "provider": "github",
@@ -25,7 +25,7 @@
     "eslint": {
       "provider": "npm",
       "package": "eslint",
-      "version": "10.11.0"
+      "version": "10.12.0"
     },
     "findsecbugs": {
       "provider": "maven",
@@ -78,7 +78,7 @@
     "semgrep": {
       "provider": "pypi",
       "package": "semgrep",
-      "version": "1.177.0"
+      "version": "1.179.0"
     },
     "spotbugs": {
       "provider": "github",
@@ -91,18 +91,18 @@
     "trivy": {
       "provider": "github",
       "repository": "aquasecurity/trivy",
-      "version": "0.74.0",
+      "version": "0.75.0",
       "tagTemplate": "v{version}",
       "assetTemplate": "trivy_{version}_Linux-64bit.tar.gz",
-      "sha256": "2ae6fe3ee734b7fdf11335663e18c75ea12dccc76062f09f164a3b0f8be4371a"
+      "sha256": "c6e65abddb348e25f10549df887045629cf28cc72453cd1c63acb717316b3f3f"
     },
     "trufflehog": {
       "provider": "github",
       "repository": "trufflesecurity/trufflehog",
-      "version": "3.97.5",
+      "version": "3.97.9",
       "tagTemplate": "v{version}",
       "assetTemplate": "trufflehog_{version}_linux_amd64.tar.gz",
-      "sha256": "e3d97199c565c37ca6152750197f667e08ae6a1edf5911fbdec168622b28620c"
+      "sha256": "40377e6572495412fb9ba0bc21c9401f73b72f1d2afd11b9931bc4a5ed622866"
     },
     "zizmor": {
       "provider": "github",
