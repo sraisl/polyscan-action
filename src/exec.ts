@@ -77,7 +77,12 @@ export async function resolvePinnedExecutable(
 
   const result = await run(executable, versionArgs);
   if (result.exitCode !== 0) return null;
-  const match = /^v?(\d+(?:\.\d+)+)(?:\s|$)/.exec(result.stdout.trim());
+  // Tools report the version either bare ("1.180.0") or prefixed with their own
+  // name ("bandit 1.9.4"). Allow at most one leading name token on the first
+  // line so a version number printed elsewhere in a banner cannot pass for the
+  // pinned release.
+  const firstLine = result.stdout.trim().split(/\r?\n/, 1)[0] ?? "";
+  const match = /^(?:[A-Za-z][\w.+-]*\s+)?v?(\d+(?:\.\d+)+)(?:\s|$)/.exec(firstLine);
   return match?.[1] === expectedVersion ? executable : null;
 }
 
@@ -99,9 +104,15 @@ export async function ensurePythonTool(
   label: string,
   core: { info: (s: string) => void; warning: (s: string) => void },
 ): Promise<PreparedTool | null> {
-  const existingExecutable = resolveExecutable(tool);
-  if (existingExecutable) {
-    return { executable: existingExecutable, cleanup: () => undefined };
+  // A preinstalled binary is only reusable when it reports the version pinned in
+  // tools.lock.json. Otherwise install the pinned release in an isolated
+  // environment, keeping scanner behavior reproducible across runners.
+  if (resolveExecutable(tool)) {
+    const pinned = await resolvePinnedExecutable(tool, version);
+    if (pinned) {
+      return { executable: pinned, cleanup: () => undefined };
+    }
+    core.warning(`Ignoring ${label} from PATH because it is not the pinned version ${version}`);
   }
 
   core.info(`${label} not found — installing ${tool}==${version} in an isolated environment…`);
