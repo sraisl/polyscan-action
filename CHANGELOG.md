@@ -13,6 +13,12 @@ tags and must not be reused or moved.
 
 ## [Unreleased]
 
+### Fixed
+
+- Bandit and Semgrep reuse a preinstalled executable only when it reports the version pinned in
+  `tools.lock.json`. A runner with a different version installed now gets the pinned release in an
+  isolated environment instead, so scan results stay reproducible.
+
 ## [v16.1.0] - 2026-09-25
 
 ### Added
