@@ -87953,9 +87953,12 @@ ZipStream.prototype.finalize = function() {
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.SUPPORTED_ENGINES = exports.DEFAULT_ENGINES = void 0;
+exports.RISKY_ENGINE_REASONS = exports.SUPPORTED_ENGINES = exports.DEFAULT_ENGINES = void 0;
 exports.resolveEngines = resolveEngines;
 exports.unknownEngines = unknownEngines;
+exports.riskyEngineReason = riskyEngineReason;
+exports.isRiskyEngine = isRiskyEngine;
+exports.selectEnginesForRun = selectEnginesForRun;
 exports.DEFAULT_ENGINES = [
     "semgrep",
     "bandit",
@@ -87996,6 +87999,46 @@ function resolveEngines(input) {
 }
 function unknownEngines(engines) {
     return engines.filter((e) => !exports.SUPPORTED_ENGINES.includes(e));
+}
+// Engines that are unsafe to point at code from someone without write access:
+// they either execute repository-controlled code or send repository content off
+// the runner. They are skipped on untrusted runs unless the workflow opts in
+// with `allow-risky-engines: true` — see src/untrusted.ts.
+//
+// Keyed by EngineName (not a bare string) so a typo in an engine key fails to
+// compile instead of silently never matching.
+exports.RISKY_ENGINE_REASONS = {
+    spotbugs: "compiles the target using its own build files (mvn compile, gradle classes, ./gradlew), " +
+        "which executes repository-controlled code on the runner",
+    trufflehog: "verifies candidate credentials by making live outbound requests to third-party provider APIs",
+};
+function riskyEngineReason(engine) {
+    return exports.RISKY_ENGINE_REASONS[engine];
+}
+function isRiskyEngine(engine) {
+    return riskyEngineReason(engine) !== undefined;
+}
+/**
+ * Splits the requested engines into the ones that may run and the ones safe
+ * mode withholds. Engine order is preserved. Nothing is withheld on a trusted
+ * run, or when the workflow has explicitly opted into risky engines.
+ */
+function selectEnginesForRun(engines, options) {
+    if (!options.untrusted || options.allowRisky) {
+        return { engines: [...engines], skipped: [] };
+    }
+    const selected = [];
+    const skipped = [];
+    for (const engine of engines) {
+        const reason = riskyEngineReason(engine);
+        if (reason === undefined) {
+            selected.push(engine);
+        }
+        else {
+            skipped.push({ engine, reason });
+        }
+    }
+    return { engines: selected, skipped };
 }
 
 
@@ -90463,6 +90506,7 @@ const sarif_1 = __nccwpck_require__(20866);
 const sbom_1 = __nccwpck_require__(20594);
 const summary_1 = __nccwpck_require__(28855);
 const engines_1 = __nccwpck_require__(62616);
+const untrusted_1 = __nccwpck_require__(30873);
 const target_1 = __nccwpck_require__(76746);
 const tools_1 = __nccwpck_require__(51732);
 const scheduler_1 = __nccwpck_require__(5622);
@@ -90482,14 +90526,23 @@ function intInput(name, def) {
     return Number.isNaN(n) ? def : n;
 }
 function readConfig() {
-    const engines = (0, engines_1.resolveEngines)(core.getInput("engines"));
-    const unknown = (0, engines_1.unknownEngines)(engines);
+    const requested = (0, engines_1.resolveEngines)(core.getInput("engines"));
+    const unknown = (0, engines_1.unknownEngines)(requested);
     if (unknown.length > 0) {
         throw new Error(`Unknown engine(s): ${unknown.join(", ")}. Valid engines: ${engines_1.SUPPORTED_ENGINES.join(", ")}`);
     }
+    const trust = (0, untrusted_1.isUntrustedRun)();
+    const allowRiskyEngines = boolInput("allow-risky-engines", false);
+    const selection = (0, engines_1.selectEnginesForRun)(requested, {
+        untrusted: trust.untrusted,
+        allowRisky: allowRiskyEngines,
+    });
     return {
         target: (0, target_1.resolveTarget)(core.getInput("target") || "."),
-        engines,
+        engines: selection.engines,
+        skippedEngines: selection.skipped,
+        allowRiskyEngines,
+        trust,
         gateEnforced: boolInput("gate", true),
         failOnEngineError: boolInput("fail-on-engine-error", true),
         wantSarif: boolInput("sarif", true),
@@ -90578,6 +90631,37 @@ async function runEngines(config) {
         return result;
     });
 }
+// Reports safe mode's decision and turns each withheld engine into a "skipped"
+// result, so the job summary and the engine outputs account for it instead of
+// silently dropping it from the run.
+function reportSafeMode(config) {
+    // Logged on every run, trusted or not: without it a misclassified run looks
+    // like a run where safe mode simply had nothing to do.
+    core.info(`Run trust: ${config.trust.untrusted ? "untrusted" : "trusted"} — ${config.trust.reason}`);
+    if (config.trust.advisory)
+        core.warning(config.trust.advisory);
+    if (config.skippedEngines.length === 0) {
+        if (config.trust.untrusted && config.allowRiskyEngines) {
+            core.warning(`Untrusted run (${config.trust.reason}), but 'allow-risky-engines: true' is set — ` +
+                "engines that execute repository code are not being withheld.");
+        }
+        else if (config.trust.untrusted) {
+            core.info(`Untrusted run (${config.trust.reason}) — no risky engines were requested.`);
+        }
+        return [];
+    }
+    core.warning(`Safe mode: skipping ${config.skippedEngines.map((s) => s.engine).join(", ")} because this ` +
+        `is an untrusted run (${config.trust.reason}). Set 'allow-risky-engines: true' to run them anyway.`);
+    return config.skippedEngines.map((skipped) => {
+        core.info(`[${skipped.engine}] skipped by safe mode: ${skipped.reason}`);
+        return {
+            engine: skipped.engine,
+            findings: [],
+            status: "skipped",
+            note: `skipped by safe mode: ${skipped.reason}`,
+        };
+    });
+}
 function sortedFindings(engineResults) {
     const findings = engineResults.flatMap((result) => result.findings);
     const rank = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
@@ -90624,8 +90708,10 @@ async function uploadReports(files, outputDir) {
         core.warning(`artifact upload failed: ${String(err).slice(0, 200)}`);
     }
 }
-function setOutputs(findings, engineResults, gatePassed) {
+function setOutputs(config, findings, engineResults, gatePassed) {
     const counts = (0, schema_1.countBySeverity)(findings);
+    core.setOutput("untrusted-run", String(config.trust.untrusted));
+    core.setOutput("skipped-risky-engines", config.skippedEngines.map((skipped) => skipped.engine).join(","));
     core.setOutput("total", String(counts.total));
     core.setOutput("critical", String(counts.critical));
     core.setOutput("high", String(counts.high));
@@ -90664,7 +90750,8 @@ async function main() {
     (0, tools_1.assertSupportedPlatform)();
     const config = readConfig();
     core.info(`PolyScan scanning "${config.target}" with engines: ${config.engines.join(", ")}`);
-    const engineResults = await runEngines(config);
+    const skippedResults = reportSafeMode(config);
+    const engineResults = [...(await runEngines(config)), ...skippedResults];
     const findings = sortedFindings(engineResults);
     const counts = (0, schema_1.countBySeverity)(findings);
     const gate = (0, gate_1.evaluateGate)(findings, config.gate);
@@ -90678,7 +90765,7 @@ async function main() {
         core.info("upload-sarif=true: use a follow-up 'github/codeql-action/upload-sarif' step " +
             `with sarif_file: ${reports.sarifPath} (needs security-events: write).`);
     }
-    const failedEngines = setOutputs(findings, engineResults, gate.passed);
+    const failedEngines = setOutputs(config, findings, engineResults, gate.passed);
     enforceResults(failedEngines, config.failOnEngineError, config.gateEnforced, gate);
 }
 main().catch((err) => {
@@ -91592,6 +91679,150 @@ async function cachedTool(name, version, executable, install) {
         }
     }
     throw new Error(`${name} installation failed after ${INSTALL_RETRY_ATTEMPTS} attempts`);
+}
+
+
+/***/ }),
+
+/***/ 30873:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.readEventPayload = readEventPayload;
+exports.isUntrustedRun = isUntrustedRun;
+// Detects whether the code in the workspace came from someone who cannot push
+// to this repository.
+//
+// Anyone with a GitHub account can open a pull request from a fork, so on such
+// a run every file in the workspace — including build scripts — is attacker
+// controlled. Engines that execute repository-controlled code must therefore
+// not run by default for these events (see RISKY_ENGINE_REASONS in engines.ts).
+const fs = __importStar(__nccwpck_require__(73024));
+const PULL_REQUEST_TARGET_ADVISORY = "pull_request_target runs with the base repository's permissions and secrets, so PolyScan " +
+    "treats it as trusted. This pull request comes from a fork: if this workflow checks out the " +
+    "pull request head instead of the base ref, the workspace holds untrusted code and you should " +
+    "not run engines that execute it.";
+function asRecord(value) {
+    return typeof value === "object" && value !== null && !Array.isArray(value)
+        ? value
+        : undefined;
+}
+function repoFullName(repo) {
+    return typeof repo?.full_name === "string" ? repo.full_name : undefined;
+}
+/**
+ * Reads and parses the webhook payload GitHub writes for the current event.
+ *
+ * Returns `undefined` when `GITHUB_EVENT_PATH` is unset, unreadable or not
+ * valid JSON. The payload is attacker-influenced data, so every field is
+ * re-checked at the point of use rather than trusted to have a given shape.
+ */
+function readEventPayload(env) {
+    const eventPath = env.GITHUB_EVENT_PATH;
+    if (!eventPath)
+        return undefined;
+    try {
+        return JSON.parse(fs.readFileSync(eventPath, "utf8"));
+    }
+    catch {
+        return undefined;
+    }
+}
+/**
+ * Classifies the current run as trusted or untrusted.
+ *
+ * - Any event other than `pull_request` runs code that only someone with write
+ *   access could have placed in the repository, so it is trusted. That includes
+ *   local runs, where `GITHUB_EVENT_NAME` is unset, and `pull_request_target`,
+ *   which checks out the base ref by default (see PULL_REQUEST_TARGET_ADVISORY).
+ * - A `pull_request` is untrusted when its head repository is not its base
+ *   repository. Comparing `full_name` is the reliable signal: `head.repo.fork`
+ *   is also `true` for an internal pull request when the repository is itself a
+ *   fork of something else, so it is only consulted as a fallback.
+ * - A `pull_request` whose head repository cannot be identified — no payload,
+ *   unparsable payload, or a deleted head repository — fails closed and is
+ *   reported as untrusted.
+ *
+ * The event payload is read from disk when it is not supplied by the caller.
+ */
+function isUntrustedRun(env = process.env, eventPayload = readEventPayload(env)) {
+    const eventName = env.GITHUB_EVENT_NAME ?? "";
+    if (eventName !== "pull_request") {
+        const trusted = {
+            untrusted: false,
+            reason: `event "${eventName || "(none)"}" only runs code from the repository itself`,
+        };
+        if (eventName === "pull_request_target" && headIsForeign(eventPayload) === true) {
+            trusted.advisory = PULL_REQUEST_TARGET_ADVISORY;
+        }
+        return trusted;
+    }
+    const foreign = headIsForeign(eventPayload);
+    if (foreign === undefined) {
+        return {
+            untrusted: true,
+            reason: "pull_request event whose head repository could not be identified — " +
+                "assuming it is a fork",
+        };
+    }
+    if (!foreign) {
+        return { untrusted: false, reason: "pull request from a branch of this repository" };
+    }
+    return { untrusted: true, reason: "pull request from a forked repository" };
+}
+/**
+ * Whether the pull request's head repository differs from its base repository.
+ * Returns `undefined` when the payload does not let us tell.
+ */
+function headIsForeign(eventPayload) {
+    const pullRequest = asRecord(asRecord(eventPayload)?.pull_request);
+    if (!pullRequest)
+        return undefined;
+    const headRepo = asRecord(asRecord(pullRequest.head)?.repo);
+    const baseRepo = asRecord(asRecord(pullRequest.base)?.repo);
+    const headName = repoFullName(headRepo);
+    const baseName = repoFullName(baseRepo);
+    if (headName !== undefined && baseName !== undefined)
+        return headName !== baseName;
+    // full_name is missing on at least one side — fall back to the fork flag.
+    if (headRepo?.fork === true)
+        return true;
+    return undefined;
 }
 
 

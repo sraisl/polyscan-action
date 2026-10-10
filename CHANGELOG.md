@@ -13,6 +13,17 @@ tags and must not be reused or moved.
 
 ## [Unreleased]
 
+### Added
+
+- Safe mode for untrusted runs: on a pull request from a fork, PolyScan now skips the engines
+  that act on contributor-controlled code (`spotbugs`, which compiles the target with its own
+  build files, and `trufflehog`, which makes live outbound verification calls). Every other
+  engine still runs and a withheld engine is reported as `skipped`, not `failed`.
+- `allow-risky-engines` input (default `false`) opts back into those engines on untrusted runs.
+- `untrusted-run` and `skipped-risky-engines` outputs expose safe mode's decision.
+- The trust classification and the reason for it are logged on every run, trusted or not, so a
+  misclassified run is visible instead of looking like a run with nothing to withhold.
+
 ### Fixed
 
 - Bandit and Semgrep reuse a preinstalled executable only when it reports the version pinned in

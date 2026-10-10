@@ -1,0 +1,6 @@
+{
+  "pull_request": {
+    "head": { "repo": { "full_name": "outside-contributor/polyscan-action", "fork": true } },
+    "base": { "repo": { "full_name": "sraisl/polyscan-action", "fork": false } }
+  }
+}
