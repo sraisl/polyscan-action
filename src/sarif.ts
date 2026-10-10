@@ -1,6 +1,6 @@
 // SARIF 2.1.0 serializer (GitHub Code Scanning compatible).
 import { Finding, Severity } from "./schema";
-import pkg from "../package.json";
+import { VERSION } from "./version";
 
 function sarifLevel(sev: Severity): string {
   switch (sev) {
@@ -69,7 +69,7 @@ export function toSarif(findings: Finding[]): string {
         tool: {
           driver: {
             name: "PolyScan",
-            version: pkg.version,
+            version: VERSION,
             informationUri: "https://github.com/sraisl/polyscan-action",
             rules,
           },
