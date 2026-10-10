@@ -70,33 +70,38 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
 
-      # A fixed, literal payload — nothing from the triggering event is
-      # interpolated into it, so a contributor cannot steer this step.
-      - name: Write a synthetic forked pull request event payload
-        run: |
-          cat > "$RUNNER_TEMP/fork-event.json" <<'JSON'
-          {
-            "pull_request": {
-              "head": { "repo": { "full_name": "outside-contributor/polyscan-action", "fork": true } },
-              "base": { "repo": { "full_name": "sraisl/polyscan-action", "fork": false } }
-            }
-          }
-          JSON
-
+      # The synthetic event can only reach the action through
+      # GITHUB_EVENT_NAME and GITHUB_EVENT_PATH, and the runner ignores
+      # attempts to set GITHUB_* variables in a step's `env:` block, so
+      # `uses: ./` cannot be handed a forged event. The bundled entrypoint is
+      # started directly instead: it is the same dist/index.js that `uses: ./`
+      # runs, it reads its inputs from the INPUT_* variables the runner would
+      # otherwise set, and it writes its outputs to $GITHUB_OUTPUT, so
+      # `steps.scan.outputs.*` below keeps working.
+      #
+      # test/fixtures/forked-pull-request-event.json is a committed, fixed
+      # payload — nothing from the triggering event is interpolated into this
+      # step, so a contributor cannot steer it. test/untrusted.test.ts asserts
+      # that this exact file is classified as untrusted, so the fixture and
+      # the detection logic cannot drift apart unnoticed.
+      #
+      # INPUT_GATE is false because the fixtures are intentionally vulnerable.
       - name: Run PolyScan as if triggered by a pull request from a fork
         id: scan
-        env:
-          GITHUB_EVENT_NAME: pull_request
-          GITHUB_EVENT_PATH: ${{ runner.temp }}/fork-event.json
-        uses: ./
-        with:
-          target: "test-fixtures"
-          engines: "spotbugs,trufflehog,hadolint"
-          gate: "false"          # fixtures are intentionally vulnerable
-          sarif: "false"
-          sbom: "false"
-          upload-artifacts: "false"
+        run: |
+          env GITHUB_EVENT_NAME="pull_request" \
+              GITHUB_EVENT_PATH="$GITHUB_WORKSPACE/test/fixtures/forked-pull-request-event.json" \
+              INPUT_TARGET="test-fixtures" \
+              INPUT_ENGINES="spotbugs,trufflehog,hadolint" \
+              INPUT_GATE="false" \
+              INPUT_SARIF="false" \
+              INPUT_SBOM="false" \
+              INPUT_UPLOAD-ARTIFACTS="false" \
+              node dist/index.js
 
       - name: Assert safe mode withheld the risky engines
         env:

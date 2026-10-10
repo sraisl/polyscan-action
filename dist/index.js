@@ -90624,6 +90624,9 @@ async function runEngines(config) {
 // result, so the job summary and the engine outputs account for it instead of
 // silently dropping it from the run.
 function reportSafeMode(config) {
+    // Logged on every run, trusted or not: without it a misclassified run looks
+    // like a run where safe mode simply had nothing to do.
+    core.info(`Run trust: ${config.trust.untrusted ? "untrusted" : "trusted"} — ${config.trust.reason}`);
     if (config.trust.advisory)
         core.warning(config.trust.advisory);
     if (config.skippedEngines.length === 0) {

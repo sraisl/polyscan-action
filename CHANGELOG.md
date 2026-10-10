@@ -21,6 +21,8 @@ tags and must not be reused or moved.
   engine still runs and a withheld engine is reported as `skipped`, not `failed`.
 - `allow-risky-engines` input (default `false`) opts back into those engines on untrusted runs.
 - `untrusted-run` and `skipped-risky-engines` outputs expose safe mode's decision.
+- The trust classification and the reason for it are logged on every run, trusted or not, so a
+  misclassified run is visible instead of looking like a run with nothing to withhold.
 
 ## [v16.1.0] - 2026-09-25
 

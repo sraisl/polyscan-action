@@ -5,6 +5,14 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 import { isUntrustedRun, readEventPayload } from "../src/untrusted";
+import { selectEnginesForRun } from "../src/engines";
+
+// The same file the safe-mode-selftest job feeds to the bundled action. Paths
+// are resolved from the compiled test in dist-test/test, hence the two levels.
+const FORK_EVENT_FIXTURE = path.resolve(
+  __dirname,
+  "../../test/fixtures/forked-pull-request-event.json",
+);
 
 function pullRequestPayload(headRepo: unknown, baseRepo: unknown = { full_name: "acme/app" }) {
   return { pull_request: { head: { repo: headRepo }, base: { repo: baseRepo } } };
@@ -134,4 +142,43 @@ test("readEventPayload parses the event file and feeds the default argument", ()
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// The safe-mode-selftest job points the action at this fixture and asserts that
+// spotbugs and trufflehog are withheld. Covering the fixture here as well means
+// a change to the payload, or to the detection logic, breaks a fast unit test
+// instead of only a long end-to-end job — or, worse, nothing at all.
+test("the forked-pull-request fixture used by the selftest is untrusted", () => {
+  // Checked first: an unreadable fixture also reports "untrusted" (fail-closed),
+  // which would make the assertion below pass for the wrong reason.
+  assert.notEqual(
+    readEventPayload({ GITHUB_EVENT_PATH: FORK_EVENT_FIXTURE }),
+    undefined,
+    `${FORK_EVENT_FIXTURE} is missing or not valid JSON`,
+  );
+
+  // The payload argument is omitted, so it is read from the fixture on disk
+  // exactly as it is in a real run.
+  const trust = isUntrustedRun({
+    GITHUB_EVENT_NAME: "pull_request",
+    GITHUB_EVENT_PATH: FORK_EVENT_FIXTURE,
+  });
+  assert.equal(trust.untrusted, true);
+  assert.equal(trust.reason, "pull request from a forked repository");
+});
+
+test("the selftest fixture makes safe mode withhold exactly the risky engines", () => {
+  const trust = isUntrustedRun({
+    GITHUB_EVENT_NAME: "pull_request",
+    GITHUB_EVENT_PATH: FORK_EVENT_FIXTURE,
+  });
+  const selection = selectEnginesForRun(["spotbugs", "trufflehog", "hadolint"], {
+    untrusted: trust.untrusted,
+    allowRisky: false,
+  });
+  assert.deepEqual(selection.engines, ["hadolint"]);
+  assert.deepEqual(
+    selection.skipped.map((skipped) => skipped.engine),
+    ["spotbugs", "trufflehog"],
+  );
 });
