@@ -24,6 +24,12 @@ tags and must not be reused or moved.
 - The trust classification and the reason for it are logged on every run, trusted or not, so a
   misclassified run is visible instead of looking like a run with nothing to withhold.
 
+### Fixed
+
+- Bandit and Semgrep reuse a preinstalled executable only when it reports the version pinned in
+  `tools.lock.json`. A runner with a different version installed now gets the pinned release in an
+  isolated environment instead, so scan results stay reproducible.
+
 ## [v16.1.0] - 2026-09-25
 
 ### Added
