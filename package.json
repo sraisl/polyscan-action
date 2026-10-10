@@ -7,7 +7,7 @@
     "node": "24.x"
   },
   "scripts": {
-    "prebuild": "node scripts/require-node24.cjs",
+    "prebuild": "node scripts/require-node24.cjs && node scripts/gen-version.cjs",
     "build": "ncc build src/main.ts -o dist --source-map --license licenses.txt && node scripts/check-bundle.cjs",
     "build:test": "tsc -p tsconfig.test.json",
     "typecheck": "tsc --noEmit",
