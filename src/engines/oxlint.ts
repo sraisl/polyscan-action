@@ -7,7 +7,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import * as tc from "@actions/tool-cache";
 import { Finding, EngineResult, Severity } from "../schema";
-import { run, which } from "../exec";
+import { run, resolvePinnedExecutable } from "../exec";
 import { resolveTarget } from "../target";
 import { cachedTool, downloadVerified } from "../tools";
 import { githubReleaseUrl, TOOLS } from "../tool-versions";
@@ -39,19 +39,46 @@ const CONFIG = {
   },
 };
 
-export function hasJsSources(root: string): boolean {
-  function walk(directory: string): boolean {
+export function collectJsSources(root: string): string[] {
+  const files: string[] = [];
+  function walk(directory: string): void {
     for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
       if (entry.isDirectory()) {
-        if (!IGNORED_DIRECTORIES.has(entry.name) && walk(path.join(directory, entry.name))) return true;
+        if (!IGNORED_DIRECTORIES.has(entry.name)) walk(path.join(directory, entry.name));
       } else if (entry.isFile() && SOURCE_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) {
-        return true;
+        files.push(path.resolve(directory, entry.name));
       }
     }
-    return false;
   }
 
-  return walk(root);
+  walk(root);
+  return files.sort();
+}
+
+export function hasJsSources(root: string): boolean {
+  return collectJsSources(root).length > 0;
+}
+
+// Leave ample room for the inherited environment and argv pointers on runners.
+export function oxlintBatches(files: readonly string[], flags: readonly string[]): string[][] {
+  const limit = 32 * 1024;
+  const base = flags.reduce((bytes, arg) => bytes + Buffer.byteLength(arg) + 1, 0);
+  const batches: string[][] = [];
+  let batch: string[] = [];
+  let bytes = base;
+  for (const file of files) {
+    const size = Buffer.byteLength(file) + 1;
+    if (base + size > limit) throw new Error("oxlint source path exceeds argument budget");
+    if (bytes + size > limit) {
+      batches.push(batch);
+      batch = [];
+      bytes = base;
+    }
+    batch.push(file);
+    bytes += size;
+  }
+  if (batch.length) batches.push(batch);
+  return batches;
 }
 
 // oxlint reports "error" / "warning" / "advice".
@@ -118,8 +145,9 @@ export function parseOxlintJson(stdout: string): OxlintReport {
 }
 
 async function ensureOxlint(): Promise<string | null> {
-  if (await which("oxlint")) return "oxlint";
-  core.info(`oxlint not found — downloading v${OXLINT.version}…`);
+  const pinned = await resolvePinnedExecutable("oxlint", OXLINT.version);
+  if (pinned) return pinned;
+  core.info(`oxlint v${OXLINT.version} not found on PATH — using verified cache/download…`);
   try {
     return await cachedTool("oxlint", OXLINT.version, "oxlint", async (directory) => {
       const archive = await downloadVerified(githubReleaseUrl(OXLINT), OXLINT.sha256);
@@ -137,7 +165,8 @@ async function ensureOxlint(): Promise<string | null> {
 
 export async function runOxlint(target: string): Promise<EngineResult> {
   const abs = resolveTarget(target);
-  if (!hasJsSources(abs)) {
+  const files = collectJsSources(abs);
+  if (files.length === 0) {
     return { engine: "oxlint", findings: [], status: "skipped", note: "no JavaScript/TypeScript files found" };
   }
 
@@ -152,37 +181,40 @@ export async function runOxlint(target: string): Promise<EngineResult> {
     fs.writeFileSync(configPath, JSON.stringify(CONFIG));
 
     // Nested project configs are disabled so a repository cannot switch the security rules off.
-    const res = await run(
-      bin,
-      ["--config", configPath, "--disable-nested-config", "--no-ignore", "--format", "json", "."],
-      { cwd: abs },
-    );
-    // oxlint exits 1 when it reports findings.
-    if (res.exitCode > 1 || !res.stdout.trim()) {
-      return {
-        engine: "oxlint",
-        findings: [],
-        status: "failed",
-        note: (res.stderr || res.stdout).slice(0, 200) || `oxlint exited ${res.exitCode}`,
-      };
-    }
+    const flags = ["--config", configPath, "--disable-nested-config", "--no-ignore", "--format", "json", "--"];
+    const findings: Finding[] = [];
+    const parseErrorFiles = new Set<string>();
+    for (const batch of oxlintBatches(files, flags)) {
+      const res = await run(bin, [...flags, ...batch], { cwd: abs });
+      // oxlint exits 1 when it reports findings.
+      if (![0, 1].includes(res.exitCode) || !res.stdout.trim()) {
+        return {
+          engine: "oxlint",
+          findings: [],
+          status: "failed",
+          note: (res.stderr || res.stdout).slice(0, 200) || `oxlint exited ${res.exitCode}`,
+        };
+      }
 
-    let report: OxlintReport;
-    try {
-      report = parseOxlintJson(res.stdout);
-    } catch (err) {
-      return {
-        engine: "oxlint",
-        findings: [],
-        status: "failed",
-        note: `parse error: ${String(err).slice(0, 200)}`,
-      };
-    }
+      let report: OxlintReport;
+      try {
+        report = parseOxlintJson(res.stdout);
+      } catch (err) {
+        return {
+          engine: "oxlint",
+          findings: [],
+          status: "failed",
+          note: `parse error: ${String(err).slice(0, 200)}`,
+        };
+      }
 
-    const unparsed = report.parseErrorFiles;
+      findings.push(...report.findings);
+      for (const file of report.parseErrorFiles) parseErrorFiles.add(file);
+    }
+    const unparsed = [...parseErrorFiles].sort();
     return {
       engine: "oxlint",
-      findings: report.findings,
+      findings,
       status: "success",
       ...(unparsed.length > 0
         ? {
