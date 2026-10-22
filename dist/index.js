@@ -90544,14 +90544,50 @@ exports.which = which;
 exports.ensurePythonTool = ensurePythonTool;
 // Shared helper to run an external command and capture stdout/stderr,
 // tolerating non-zero exit codes (linters exit non-zero when they find issues).
-const exec = __importStar(__nccwpck_require__(95236));
+const childProcess = __importStar(__nccwpck_require__(31421));
 const fs = __importStar(__nccwpck_require__(73024));
 const os = __importStar(__nccwpck_require__(48161));
 const path = __importStar(__nccwpck_require__(76760));
+// Spawning a binary that another tool install has just written can fail with ETXTBSY
+// while a concurrently forked child still holds the inherited write descriptor.
+// The window closes within milliseconds, so the spawn is retried.
+const SPAWN_RETRY_ATTEMPTS = 5;
+const SPAWN_RETRY_DELAY_MS = 100;
+function isTextBusy(err) {
+    return err?.code === "ETXTBSY";
+}
+// child_process.spawn is used directly instead of @actions/exec: @actions/exec spawns
+// inside an async Promise executor, so a synchronous spawn failure such as ETXTBSY
+// becomes an unhandled rejection that crashes the action instead of reaching a caller.
+function spawnOnce(command, args, options) {
+    return new Promise((resolve, reject) => {
+        let stdout = "";
+        let stderr = "";
+        let child;
+        try {
+            child = childProcess.spawn(command, args, {
+                cwd: options.cwd,
+                env: options.env,
+                stdio: ["ignore", "pipe", "pipe"],
+            });
+        }
+        catch (err) {
+            reject(err);
+            return;
+        }
+        child.stdout?.setEncoding("utf8").on("data", (data) => {
+            stdout += data;
+        });
+        child.stderr?.setEncoding("utf8").on("data", (data) => {
+            stderr += data;
+        });
+        child.once("error", reject);
+        child.once("close", (code, signal) => {
+            resolve({ exitCode: code ?? 128, stdout, stderr: signal ? `${stderr}killed by ${signal}` : stderr });
+        });
+    });
+}
 async function run(command, args, options = {}) {
-    let stdout = "";
-    let stderr = "";
-    let exitCode = 0;
     const mergedEnv = {};
     for (const [k, v] of Object.entries(process.env)) {
         if (v !== undefined)
@@ -90559,26 +90595,17 @@ async function run(command, args, options = {}) {
     }
     if (options.env)
         Object.assign(mergedEnv, options.env);
-    try {
-        exitCode = await exec.exec(command, args, {
-            cwd: options.cwd,
-            env: mergedEnv,
-            ignoreReturnCode: true,
-            silent: true,
-            listeners: {
-                stdout: (data) => {
-                    stdout += data.toString();
-                },
-                stderr: (data) => {
-                    stderr += data.toString();
-                },
-            },
-        });
+    for (let attempt = 1;; attempt++) {
+        try {
+            return await spawnOnce(command, args, { cwd: options.cwd, env: mergedEnv });
+        }
+        catch (err) {
+            if (!isTextBusy(err) || attempt === SPAWN_RETRY_ATTEMPTS) {
+                return { exitCode: 127, stdout: "", stderr: String(err) };
+            }
+            await new Promise((resolve) => setTimeout(resolve, SPAWN_RETRY_DELAY_MS * attempt));
+        }
     }
-    catch (err) {
-        return { exitCode: 127, stdout, stderr: String(err) };
-    }
-    return { exitCode, stdout, stderr };
 }
 // Resolve against the same PATH inherited by direct child processes. A login
 // shell may source profile files and report tools that @actions/exec cannot see.
@@ -92006,6 +92033,14 @@ module.exports = require("node:async_hooks");
 
 "use strict";
 module.exports = require("node:buffer");
+
+/***/ }),
+
+/***/ 31421:
+/***/ ((module) => {
+
+"use strict";
+module.exports = require("node:child_process");
 
 /***/ }),
 
@@ -148418,7 +148453,7 @@ module.exports = /*#__PURE__*/JSON.parse('{"name":"@actions/artifact","version":
 /***/ ((module) => {
 
 "use strict";
-module.exports = /*#__PURE__*/JSON.parse('{"name":"polyscan-action","version":"17.0.0","description":"Multi-language SAST orchestrator as a native TypeScript GitHub Action with Quality Gate, SARIF, CycloneDX SBOM and job summary","main":"dist/index.js","engines":{"node":"24.x"},"scripts":{"prebuild":"node scripts/require-node24.cjs","build":"ncc build src/main.ts -o dist --source-map --license licenses.txt && node scripts/check-bundle.cjs","build:test":"tsc -p tsconfig.test.json","typecheck":"tsc --noEmit","test":"npm run build:test && node --test \\"dist-test/test/**/*.js\\"","all":"npm run typecheck && npm run build","engines:list":"node scripts/engine-tools.mjs list","engines:check":"node scripts/engine-tools.mjs check","engines:update":"node scripts/engine-tools.mjs update"},"keywords":["sast","security","semgrep","opengrep","bandit","eslint","gosec","spotbugs","zizmor","trufflehog","sarif","sbom","github-action"],"author":"Stefan Raisl","license":"MIT","dependencies":{"@actions/artifact":"^5.0.3","@actions/core":"^1.11.1","@actions/exec":"^1.1.1","@actions/tool-cache":"^2.0.2"},"devDependencies":{"@types/node":"26.6.3","@vercel/ncc":"0.45.0","typescript":"5.9.3"},"overrides":{"undici":"^6.28.0","brace-expansion":"5.0.12"}}');
+module.exports = /*#__PURE__*/JSON.parse('{"name":"polyscan-action","version":"17.0.1","description":"Multi-language SAST orchestrator as a native TypeScript GitHub Action with Quality Gate, SARIF, CycloneDX SBOM and job summary","main":"dist/index.js","engines":{"node":"24.x"},"scripts":{"prebuild":"node scripts/require-node24.cjs","build":"ncc build src/main.ts -o dist --source-map --license licenses.txt && node scripts/check-bundle.cjs","build:test":"tsc -p tsconfig.test.json","typecheck":"tsc --noEmit","test":"npm run build:test && node --test \\"dist-test/test/**/*.js\\"","all":"npm run typecheck && npm run build","engines:list":"node scripts/engine-tools.mjs list","engines:check":"node scripts/engine-tools.mjs check","engines:update":"node scripts/engine-tools.mjs update"},"keywords":["sast","security","semgrep","opengrep","bandit","eslint","gosec","spotbugs","zizmor","trufflehog","sarif","sbom","github-action"],"author":"Stefan Raisl","license":"MIT","dependencies":{"@actions/artifact":"^5.0.3","@actions/core":"^1.11.1","@actions/exec":"^1.1.1","@actions/tool-cache":"^2.0.2"},"devDependencies":{"@types/node":"26.6.3","@vercel/ncc":"0.45.0","typescript":"5.9.3"},"overrides":{"undici":"^6.28.0","brace-expansion":"5.0.12"}}');
 
 /***/ }),
 

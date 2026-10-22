@@ -13,6 +13,15 @@ tags and must not be reused or moved.
 
 ## [Unreleased]
 
+## [v17.0.1] - 2026-10-22
+
+### Fixed
+
+- A scan no longer crashes with `Error: spawn ETXTBSY` when several engines download their tools
+  at the same time. Starting a freshly installed binary can briefly fail while another concurrently
+  started process still holds it open for writing; PolyScan now retries the start. Previously the
+  error escaped as an unhandled rejection from `@actions/exec` and aborted the whole action.
+
 ## [v17.0.0] - 2026-10-22
 
 ### Added

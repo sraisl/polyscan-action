@@ -1,6 +1,6 @@
 // Shared helper to run an external command and capture stdout/stderr,
 // tolerating non-zero exit codes (linters exit non-zero when they find issues).
-import * as exec from "@actions/exec";
+import * as childProcess from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -11,38 +11,71 @@ export interface RunResult {
   stderr: string;
 }
 
+// Spawning a binary that another tool install has just written can fail with ETXTBSY
+// while a concurrently forked child still holds the inherited write descriptor.
+// The window closes within milliseconds, so the spawn is retried.
+const SPAWN_RETRY_ATTEMPTS = 5;
+const SPAWN_RETRY_DELAY_MS = 100;
+
+function isTextBusy(err: unknown): boolean {
+  return (err as NodeJS.ErrnoException | null)?.code === "ETXTBSY";
+}
+
+// child_process.spawn is used directly instead of @actions/exec: @actions/exec spawns
+// inside an async Promise executor, so a synchronous spawn failure such as ETXTBSY
+// becomes an unhandled rejection that crashes the action instead of reaching a caller.
+function spawnOnce(
+  command: string,
+  args: string[],
+  options: { cwd?: string; env: { [key: string]: string } },
+): Promise<RunResult> {
+  return new Promise((resolve, reject) => {
+    let stdout = "";
+    let stderr = "";
+    let child: childProcess.ChildProcess;
+    try {
+      child = childProcess.spawn(command, args, {
+        cwd: options.cwd,
+        env: options.env,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    } catch (err) {
+      reject(err);
+      return;
+    }
+    child.stdout?.setEncoding("utf8").on("data", (data: string) => {
+      stdout += data;
+    });
+    child.stderr?.setEncoding("utf8").on("data", (data: string) => {
+      stderr += data;
+    });
+    child.once("error", reject);
+    child.once("close", (code, signal) => {
+      resolve({ exitCode: code ?? 128, stdout, stderr: signal ? `${stderr}killed by ${signal}` : stderr });
+    });
+  });
+}
+
 export async function run(
   command: string,
   args: string[],
   options: { cwd?: string; env?: { [key: string]: string } } = {},
 ): Promise<RunResult> {
-  let stdout = "";
-  let stderr = "";
-  let exitCode = 0;
   const mergedEnv: { [key: string]: string } = {};
   for (const [k, v] of Object.entries(process.env)) {
     if (v !== undefined) mergedEnv[k] = v;
   }
   if (options.env) Object.assign(mergedEnv, options.env);
-  try {
-    exitCode = await exec.exec(command, args, {
-      cwd: options.cwd,
-      env: mergedEnv,
-      ignoreReturnCode: true,
-      silent: true,
-      listeners: {
-        stdout: (data: Buffer) => {
-          stdout += data.toString();
-        },
-        stderr: (data: Buffer) => {
-          stderr += data.toString();
-        },
-      },
-    });
-  } catch (err) {
-    return { exitCode: 127, stdout, stderr: String(err) };
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await spawnOnce(command, args, { cwd: options.cwd, env: mergedEnv });
+    } catch (err) {
+      if (!isTextBusy(err) || attempt === SPAWN_RETRY_ATTEMPTS) {
+        return { exitCode: 127, stdout: "", stderr: String(err) };
+      }
+      await new Promise((resolve) => setTimeout(resolve, SPAWN_RETRY_DELAY_MS * attempt));
+    }
   }
-  return { exitCode, stdout, stderr };
 }
 
 // Resolve against the same PATH inherited by direct child processes. A login
