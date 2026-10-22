@@ -78,11 +78,11 @@ export async function resolvePinnedExecutable(
   const result = await run(executable, versionArgs);
   if (result.exitCode !== 0) return null;
   // Tools report the version either bare ("1.180.0") or prefixed with their own
-  // name ("bandit 1.9.4"). Allow at most one leading name token on the first
+  // name ("bandit 1.9.4") or oxlint's "Version: 1.89.0" label. Allow at most one leading token on the first
   // line so a version number printed elsewhere in a banner cannot pass for the
   // pinned release.
   const firstLine = result.stdout.trim().split(/\r?\n/, 1)[0] ?? "";
-  const match = /^(?:[A-Za-z][\w.+-]*\s+)?v?(\d+(?:\.\d+)+)(?:\s|$)/.exec(firstLine);
+  const match = /^(?:(?:[A-Za-z][\w.+-]*|Version:)\s+)?v?(\d+(?:\.\d+)+)(?:\s|$)/.exec(firstLine);
   return match?.[1] === expectedVersion ? executable : null;
 }
 

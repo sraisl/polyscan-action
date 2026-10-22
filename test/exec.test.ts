@@ -124,6 +124,21 @@ test("resolvePinnedExecutable accepts output prefixed with the tool name", async
   }
 });
 
+test("resolvePinnedExecutable accepts oxlint's Version label without accepting arbitrary banners", async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "polyscan-version-"));
+  const executable = path.join(directory, "oxlint");
+  try {
+    fs.writeFileSync(executable, "#!/bin/sh\nprintf 'Version: 1.89.0\\n'\n");
+    fs.chmodSync(executable, 0o755);
+    assert.equal(await resolvePinnedExecutable("oxlint", "1.89.0", ["--version"], directory), executable);
+    assert.equal(await resolvePinnedExecutable("oxlint", "1.88.0", ["--version"], directory), null);
+    fs.writeFileSync(executable, "#!/bin/sh\nprintf 'Banner: 1.89.0\\n'\n");
+    assert.equal(await resolvePinnedExecutable("oxlint", "1.89.0", ["--version"], directory), null);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("ensurePythonTool reuses a preinstalled tool that reports the pinned version", async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "polyscan-python-"));
   const executable = path.join(directory, "bandit");

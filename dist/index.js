@@ -87959,7 +87959,7 @@ exports.unknownEngines = unknownEngines;
 exports.DEFAULT_ENGINES = [
     "semgrep",
     "bandit",
-    "eslint",
+    "oxlint",
     "spotbugs",
     "trivy",
     "detekt",
@@ -87974,6 +87974,7 @@ exports.SUPPORTED_ENGINES = [
     "opengrep",
     "bandit",
     "eslint",
+    "oxlint",
     "spotbugs",
     "trivy",
     "detekt",
@@ -89244,6 +89245,294 @@ async function runOpengrep(target, config, excludedRules = []) {
 
 /***/ }),
 
+/***/ 52341:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.collectJsSources = collectJsSources;
+exports.hasJsSources = hasJsSources;
+exports.isOxlintLintable = isOxlintLintable;
+exports.oxlintBatches = oxlintBatches;
+exports.oxlintRuleId = oxlintRuleId;
+exports.parseOxlintJson = parseOxlintJson;
+exports.runOxlint = runOxlint;
+// oxlint engine adapter for JS/TS security-relevant rules.
+// Downloads the pinned standalone binary, runs a minimal security rule set and parses
+// oxlint's JSON report. Unlike the ESLint adapter it parses TypeScript/JSX natively.
+const core = __importStar(__nccwpck_require__(37484));
+const fs = __importStar(__nccwpck_require__(73024));
+const os = __importStar(__nccwpck_require__(48161));
+const path = __importStar(__nccwpck_require__(76760));
+const tc = __importStar(__nccwpck_require__(33472));
+const exec_1 = __nccwpck_require__(73190);
+const target_1 = __nccwpck_require__(76746);
+const tools_1 = __nccwpck_require__(51732);
+const tool_versions_1 = __nccwpck_require__(88947);
+const OXLINT = tool_versions_1.TOOLS.oxlint;
+const IGNORED_DIRECTORIES = new Set([".git", "node_modules", "vendor", "build", "dist", "target", ".gradle"]);
+const SOURCE_EXTENSIONS = new Set([".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts"]);
+// Every default category is switched off so only the explicit security rules run.
+// react/jsx-no-script-url is left out on purpose: no-script-url already reports the same
+// `javascript:` URL, and enabling both would count one issue twice in the Quality Gate.
+// The browser and node environments are required: without them oxlint only knows ECMAScript
+// built-ins, so no-eval misses window.eval/global.eval and no-implied-eval never sees the timers.
+const CONFIG = {
+    plugins: ["react"],
+    env: { builtin: true, browser: true, node: true },
+    categories: {
+        correctness: "off",
+        suspicious: "off",
+        pedantic: "off",
+        perf: "off",
+        style: "off",
+        restriction: "off",
+        nursery: "off",
+    },
+    rules: {
+        "no-eval": "error",
+        "no-implied-eval": "error",
+        "no-new-func": "error",
+        "no-script-url": "error",
+        "react/no-danger": "warn",
+    },
+};
+function collectJsSources(root) {
+    const files = [];
+    function walk(directory) {
+        for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+            if (entry.isDirectory()) {
+                if (!IGNORED_DIRECTORIES.has(entry.name))
+                    walk(path.join(directory, entry.name));
+            }
+            else if (entry.isFile() && SOURCE_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) {
+                files.push(path.resolve(directory, entry.name));
+            }
+        }
+    }
+    walk(root);
+    return files.sort();
+}
+function hasJsSources(root) {
+    return collectJsSources(root).length > 0;
+}
+// oxlint 1.89.0 silently drops explicit paths it does not consider lintable (apps/oxlint/src/walk.rs):
+// names containing ".min.", "-min." or "_min.", and extensions that are not an exact lowercase match.
+function isOxlintLintable(file) {
+    const name = path.basename(file);
+    if ([".min.", "-min.", "_min."].some((marker) => name.includes(marker)))
+        return false;
+    return SOURCE_EXTENSIONS.has(path.extname(name));
+}
+// oxlint's parallel workers emit diagnostics in completion order.
+function compareFindings(a, b) {
+    return (a.file.localeCompare(b.file) ||
+        a.line - b.line ||
+        (a.column ?? 0) - (b.column ?? 0) ||
+        a.ruleId.localeCompare(b.ruleId) ||
+        a.message.localeCompare(b.message));
+}
+function fileList(label, files, root) {
+    const shown = files.slice(0, 5).map((file) => path.relative(root, file).split(path.sep).join("/"));
+    return `${files.length} file(s) ${label}: ${shown.join(", ")}${files.length > 5 ? ", …" : ""}`;
+}
+// Leave ample room for the inherited environment and argv pointers on runners.
+function oxlintBatches(files, flags) {
+    const limit = 32 * 1024;
+    const base = flags.reduce((bytes, arg) => bytes + Buffer.byteLength(arg) + 1, 0);
+    const batches = [];
+    let batch = [];
+    let bytes = base;
+    for (const file of files) {
+        const size = Buffer.byteLength(file) + 1;
+        if (base + size > limit)
+            throw new Error("oxlint source path exceeds argument budget");
+        if (bytes + size > limit) {
+            batches.push(batch);
+            batch = [];
+            bytes = base;
+        }
+        batch.push(file);
+        bytes += size;
+    }
+    if (batch.length)
+        batches.push(batch);
+    return batches;
+}
+// oxlint reports "error" / "warning" / "advice".
+function mapSeverity(severity) {
+    switch ((severity || "").toLowerCase()) {
+        case "error":
+            return "high";
+        case "warning":
+            return "medium";
+        default:
+            return "low";
+    }
+}
+// oxlint codes look like "eslint(no-eval)" or "react(no-danger)"; report them the way the
+// rules are configured: core rules bare, plugin rules as "<plugin>/<rule>".
+function oxlintRuleId(code) {
+    const match = /^([^()]+)\((.+)\)$/.exec(code.trim());
+    if (!match)
+        return code.trim();
+    const plugin = match[1].replace(/^eslint-plugin-/, "");
+    return plugin === "eslint" ? match[2] : `${plugin}/${match[2]}`;
+}
+function parseOxlintJson(stdout) {
+    const data = JSON.parse(stdout);
+    if (!Array.isArray(data.diagnostics))
+        throw new Error("oxlint report has no diagnostics array");
+    const findings = [];
+    const parseErrorFiles = new Set();
+    for (const d of data.diagnostics) {
+        const diagnostic = d;
+        const file = diagnostic.filename ?? "unknown";
+        if (!diagnostic.code) {
+            parseErrorFiles.add(file);
+            continue;
+        }
+        const ruleId = oxlintRuleId(diagnostic.code);
+        const span = diagnostic.labels?.[0]?.span;
+        findings.push({
+            engine: "oxlint",
+            ruleId,
+            severity: mapSeverity(diagnostic.severity ?? ""),
+            message: diagnostic.message ?? ruleId,
+            file,
+            line: span?.line ?? 0,
+            column: span?.column,
+            ...(diagnostic.url ? { url: diagnostic.url } : {}),
+        });
+    }
+    return { findings, parseErrorFiles: [...parseErrorFiles].sort() };
+}
+async function ensureOxlint() {
+    const pinned = await (0, exec_1.resolvePinnedExecutable)("oxlint", OXLINT.version);
+    if (pinned)
+        return pinned;
+    core.info(`oxlint v${OXLINT.version} not found on PATH — using verified cache/download…`);
+    try {
+        return await (0, tools_1.cachedTool)("oxlint", OXLINT.version, "oxlint", async (directory) => {
+            const archive = await (0, tools_1.downloadVerified)((0, tool_versions_1.githubReleaseUrl)(OXLINT), OXLINT.sha256);
+            await tc.extractTar(archive, directory);
+            // The archive holds a single binary named like the asset, e.g. oxlint-x86_64-unknown-linux-gnu.
+            const packaged = OXLINT.assetTemplate.replace(/\.tar\.gz$/, "");
+            fs.renameSync(path.join(directory, packaged), path.join(directory, "oxlint"));
+            fs.chmodSync(path.join(directory, "oxlint"), 0o700);
+        });
+    }
+    catch (err) {
+        core.warning(`oxlint download failed: ${String(err).slice(0, 200)}`);
+        return null;
+    }
+}
+async function runOxlint(target) {
+    const abs = (0, target_1.resolveTarget)(target);
+    const files = collectJsSources(abs);
+    if (files.length === 0) {
+        return { engine: "oxlint", findings: [], status: "skipped", note: "no JavaScript/TypeScript files found" };
+    }
+    const bin = await ensureOxlint();
+    if (!bin) {
+        return { engine: "oxlint", findings: [], status: "failed", note: "oxlint not installed" };
+    }
+    const lintable = files.filter(isOxlintLintable);
+    const unsupported = files.filter((file) => !isOxlintLintable(file));
+    const workdir = fs.mkdtempSync(path.join(os.tmpdir(), "polyscan-oxlint-"));
+    try {
+        const configPath = path.join(workdir, "oxlintrc.json");
+        fs.writeFileSync(configPath, JSON.stringify(CONFIG));
+        // Nested project configs are disabled so a repository cannot switch the security rules off.
+        // oxlint runs from the private workdir, never the target: it loads oxlint-suppressions.json
+        // from its working directory, which would let a scanned repository hide findings. Running
+        // elsewhere also makes it report absolute filenames, which normalizeFindingPath resolves
+        // unambiguously (a target-relative "src/app.ts" under target "src" reads as workspace-relative).
+        const flags = ["--config", configPath, "--disable-nested-config", "--no-ignore", "--format", "json", "--"];
+        const findings = [];
+        const parseErrorFiles = new Set();
+        for (const batch of oxlintBatches(lintable, flags)) {
+            const res = await (0, exec_1.run)(bin, [...flags, ...batch], { cwd: workdir });
+            // oxlint exits 1 when it reports findings.
+            if (![0, 1].includes(res.exitCode) || !res.stdout.trim()) {
+                return {
+                    engine: "oxlint",
+                    findings: [],
+                    status: "failed",
+                    note: (res.stderr || res.stdout).slice(0, 200) || `oxlint exited ${res.exitCode}`,
+                };
+            }
+            let report;
+            try {
+                report = parseOxlintJson(res.stdout);
+            }
+            catch (err) {
+                return {
+                    engine: "oxlint",
+                    findings: [],
+                    status: "failed",
+                    note: `parse error: ${String(err).slice(0, 200)}`,
+                };
+            }
+            findings.push(...report.findings);
+            for (const file of report.parseErrorFiles)
+                parseErrorFiles.add(file);
+        }
+        const notes = [
+            ...(parseErrorFiles.size > 0
+                ? [fileList("could not be parsed and were not scanned", [...parseErrorFiles].sort(), abs)]
+                : []),
+            ...(unsupported.length > 0 ? [fileList("not supported by oxlint and not scanned", unsupported, abs)] : []),
+        ];
+        return {
+            engine: "oxlint",
+            findings: findings.sort(compareFindings),
+            status: "success",
+            ...(notes.length > 0 ? { note: notes.join("; ") } : {}),
+        };
+    }
+    finally {
+        fs.rmSync(workdir, { recursive: true, force: true });
+    }
+}
+
+
+/***/ }),
+
 /***/ 7903:
 /***/ ((__unused_webpack_module, exports) => {
 
@@ -90317,11 +90606,11 @@ async function resolvePinnedExecutable(tool, expectedVersion, versionArgs = ["--
     if (result.exitCode !== 0)
         return null;
     // Tools report the version either bare ("1.180.0") or prefixed with their own
-    // name ("bandit 1.9.4"). Allow at most one leading name token on the first
+    // name ("bandit 1.9.4") or oxlint's "Version: 1.89.0" label. Allow at most one leading token on the first
     // line so a version number printed elsewhere in a banner cannot pass for the
     // pinned release.
     const firstLine = result.stdout.trim().split(/\r?\n/, 1)[0] ?? "";
-    const match = /^(?:[A-Za-z][\w.+-]*\s+)?v?(\d+(?:\.\d+)+)(?:\s|$)/.exec(firstLine);
+    const match = /^(?:(?:[A-Za-z][\w.+-]*|Version:)\s+)?v?(\d+(?:\.\d+)+)(?:\s|$)/.exec(firstLine);
     return match?.[1] === expectedVersion ? executable : null;
 }
 // Check whether a binary is available to direct child processes.
@@ -90449,6 +90738,7 @@ const semgrep_1 = __nccwpck_require__(70840);
 const opengrep_1 = __nccwpck_require__(16699);
 const bandit_1 = __nccwpck_require__(59429);
 const eslint_1 = __nccwpck_require__(20690);
+const oxlint_1 = __nccwpck_require__(52341);
 const spotbugs_1 = __nccwpck_require__(70240);
 const trivy_1 = __nccwpck_require__(10139);
 const detekt_1 = __nccwpck_require__(19308);
@@ -90520,6 +90810,8 @@ async function runEngine(name, target, trivyImage, opengrepConfig, semgrepExclud
                 return await (0, bandit_1.runBandit)(target);
             case "eslint":
                 return await (0, eslint_1.runEslint)(target);
+            case "oxlint":
+                return await (0, oxlint_1.runOxlint)(target);
             case "spotbugs":
                 return await (0, spotbugs_1.runSpotbugs)(target);
             case "trivy":
@@ -91147,7 +91439,7 @@ function textCell(value) {
 // Keyed by EngineName (not a bare string) so a typo in an engine key fails to
 // compile instead of silently never matching.
 // Only link when a canonical URL can be derived with confidence: a fixed
-// engine-doc naming convention. Engine-supplied advisory URLs (Trivy) and the
+// engine-doc naming convention. Engine-supplied URLs (Trivy, oxlint) and the
 // CWE fallback are handled separately in findingUrl().
 const ENGINE_RULE_URL = {
     hadolint: (ruleId) => {
@@ -91161,7 +91453,7 @@ const ENGINE_RULE_URL = {
     eslint: (ruleId) => (ruleId.includes("/") ? undefined : `https://eslint.org/docs/latest/rules/${ruleId}`),
     zizmor: (ruleId) => ruleId.startsWith("zizmor/") ? `https://docs.zizmor.sh/audits/#${ruleId.slice("zizmor/".length)}` : undefined,
 };
-// finding.url is engine-supplied (currently only Trivy's PrimaryURL) and not
+// finding.url is engine-supplied (Trivy's PrimaryURL, oxlint's rule docs) and not
 // type-enforced beyond "string" — reject anything that isn't a well-formed
 // http(s) URL rather than rendering it as a link destination.
 function isHttpUrl(value) {
@@ -148134,7 +148426,7 @@ module.exports = /*#__PURE__*/JSON.parse('{"name":"polyscan-action","version":"1
 /***/ ((module) => {
 
 "use strict";
-module.exports = /*#__PURE__*/JSON.parse('{"schemaVersion":1,"tools":{"bandit":{"provider":"pypi","package":"bandit","version":"1.9.4"},"betterleaks":{"provider":"github","repository":"betterleaks/betterleaks","version":"1.9.0","tagTemplate":"v{version}","assetTemplate":"betterleaks_{version}_linux_x64.tar.gz","sha256":"f8b185a39ffcece2a1ca82bf3a4e7435cd81963ffd16b7a9128daf75f35f6de7"},"detekt":{"provider":"github","repository":"detekt/detekt","version":"1.23.8","tagTemplate":"v{version}","assetTemplate":"detekt-cli-{version}-all.jar","sha256":"2ce2ff952e150baf28a29cda70a363b0340b3e81a55f43e51ec5edffc3d066c1"},"eslint":{"provider":"npm","package":"eslint","version":"10.12.0"},"findsecbugs":{"provider":"maven","group":"com.h3xstream.findsecbugs","artifact":"findsecbugs-plugin","extension":"jar","version":"1.14.0","sha256":"6fa340344fa433ff46c2985dab1010e8bc739f9395c983594a5240095e92abc8"},"gitleaks":{"provider":"github","repository":"gitleaks/gitleaks","version":"8.30.1","tagTemplate":"v{version}","assetTemplate":"gitleaks_{version}_linux_x64.tar.gz","sha256":"551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"},"gosec":{"provider":"github","repository":"securego/gosec","version":"2.29.0","tagTemplate":"v{version}","assetTemplate":"gosec_{version}_linux_amd64.tar.gz","sha256":"6431b119741c1f4a50fdfcf94e782e16b9e642afc8c7fa9b5d39d48bf3003095"},"hadolint":{"provider":"github","repository":"hadolint/hadolint","version":"2.15.1","tagTemplate":"v{version}","assetTemplate":"hadolint-linux-x86_64","sha256":"c7187db94eeeeca956519a6af171adc31453941a1e777961f6e680f697c8c507"},"kotlin":{"provider":"github","repository":"JetBrains/kotlin","version":"2.4.20","tagTemplate":"v{version}","assetTemplate":"kotlin-compiler-{version}.zip","sha256":"59e9ca74c7904ef2c122b12114937673ccce68de820a663f0ed66ccf8799e0b7"},"opengrep":{"provider":"github","repository":"opengrep/opengrep","version":"1.30.0","tagTemplate":"v{version}","assetTemplate":"opengrep_manylinux_x86","sha256":"35779bdd72e92129c8df2a77f0c55e8c08356801ea92591ef32108d6b28d564c"},"semgrep":{"provider":"pypi","package":"semgrep","version":"1.179.0"},"spotbugs":{"provider":"github","repository":"spotbugs/spotbugs","version":"4.10.4","tagTemplate":"{version}","assetTemplate":"spotbugs-{version}.tgz","sha256":"72bc0d4edd686e462c0f71f42a049b27bf4da6708797ff7b2b56dd202714b4e5"},"trivy":{"provider":"github","repository":"aquasecurity/trivy","version":"0.75.0","tagTemplate":"v{version}","assetTemplate":"trivy_{version}_Linux-64bit.tar.gz","sha256":"c6e65abddb348e25f10549df887045629cf28cc72453cd1c63acb717316b3f3f"},"trufflehog":{"provider":"github","repository":"trufflesecurity/trufflehog","version":"3.97.9","tagTemplate":"v{version}","assetTemplate":"trufflehog_{version}_linux_amd64.tar.gz","sha256":"40377e6572495412fb9ba0bc21c9401f73b72f1d2afd11b9931bc4a5ed622866"},"zizmor":{"provider":"github","repository":"zizmorcore/zizmor","version":"1.30.1","tagTemplate":"v{version}","assetTemplate":"zizmor-x86_64-unknown-linux-gnu.tar.gz","sha256":"e65324f4430c2717591937edcec90ccbefaf14c174f8ec9415e03ca875b46e1a"}}}');
+module.exports = /*#__PURE__*/JSON.parse('{"schemaVersion":1,"tools":{"bandit":{"provider":"pypi","package":"bandit","version":"1.9.4"},"betterleaks":{"provider":"github","repository":"betterleaks/betterleaks","version":"1.9.0","tagTemplate":"v{version}","assetTemplate":"betterleaks_{version}_linux_x64.tar.gz","sha256":"f8b185a39ffcece2a1ca82bf3a4e7435cd81963ffd16b7a9128daf75f35f6de7"},"detekt":{"provider":"github","repository":"detekt/detekt","version":"1.23.8","tagTemplate":"v{version}","assetTemplate":"detekt-cli-{version}-all.jar","sha256":"2ce2ff952e150baf28a29cda70a363b0340b3e81a55f43e51ec5edffc3d066c1"},"eslint":{"provider":"npm","package":"eslint","version":"10.12.0"},"findsecbugs":{"provider":"maven","group":"com.h3xstream.findsecbugs","artifact":"findsecbugs-plugin","extension":"jar","version":"1.14.0","sha256":"6fa340344fa433ff46c2985dab1010e8bc739f9395c983594a5240095e92abc8"},"gitleaks":{"provider":"github","repository":"gitleaks/gitleaks","version":"8.30.1","tagTemplate":"v{version}","assetTemplate":"gitleaks_{version}_linux_x64.tar.gz","sha256":"551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"},"gosec":{"provider":"github","repository":"securego/gosec","version":"2.29.0","tagTemplate":"v{version}","assetTemplate":"gosec_{version}_linux_amd64.tar.gz","sha256":"6431b119741c1f4a50fdfcf94e782e16b9e642afc8c7fa9b5d39d48bf3003095"},"hadolint":{"provider":"github","repository":"hadolint/hadolint","version":"2.15.1","tagTemplate":"v{version}","assetTemplate":"hadolint-linux-x86_64","sha256":"c7187db94eeeeca956519a6af171adc31453941a1e777961f6e680f697c8c507"},"kotlin":{"provider":"github","repository":"JetBrains/kotlin","version":"2.4.20","tagTemplate":"v{version}","assetTemplate":"kotlin-compiler-{version}.zip","sha256":"59e9ca74c7904ef2c122b12114937673ccce68de820a663f0ed66ccf8799e0b7"},"opengrep":{"provider":"github","repository":"opengrep/opengrep","version":"1.30.0","tagTemplate":"v{version}","assetTemplate":"opengrep_manylinux_x86","sha256":"35779bdd72e92129c8df2a77f0c55e8c08356801ea92591ef32108d6b28d564c"},"oxlint":{"provider":"github","repository":"oxc-project/oxc","version":"1.89.0","tagTemplate":"oxlint_v{version}","assetTemplate":"oxlint-x86_64-unknown-linux-gnu.tar.gz","sha256":"88492c336807a34062fa540416fe75037c04bcce1ed77824e3db3aaec215949a"},"semgrep":{"provider":"pypi","package":"semgrep","version":"1.179.0"},"spotbugs":{"provider":"github","repository":"spotbugs/spotbugs","version":"4.10.4","tagTemplate":"{version}","assetTemplate":"spotbugs-{version}.tgz","sha256":"72bc0d4edd686e462c0f71f42a049b27bf4da6708797ff7b2b56dd202714b4e5"},"trivy":{"provider":"github","repository":"aquasecurity/trivy","version":"0.75.0","tagTemplate":"v{version}","assetTemplate":"trivy_{version}_Linux-64bit.tar.gz","sha256":"c6e65abddb348e25f10549df887045629cf28cc72453cd1c63acb717316b3f3f"},"trufflehog":{"provider":"github","repository":"trufflesecurity/trufflehog","version":"3.97.9","tagTemplate":"v{version}","assetTemplate":"trufflehog_{version}_linux_amd64.tar.gz","sha256":"40377e6572495412fb9ba0bc21c9401f73b72f1d2afd11b9931bc4a5ed622866"},"zizmor":{"provider":"github","repository":"zizmorcore/zizmor","version":"1.30.1","tagTemplate":"v{version}","assetTemplate":"zizmor-x86_64-unknown-linux-gnu.tar.gz","sha256":"e65324f4430c2717591937edcec90ccbefaf14c174f8ec9415e03ca875b46e1a"}}}');
 
 /***/ })
 

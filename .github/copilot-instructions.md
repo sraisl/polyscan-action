@@ -1,7 +1,7 @@
 # PolyScan Action — AI agent instructions
 
 ## What this is
-A native TypeScript GitHub Action (`src/main.ts` entry) that orchestrates multiple SAST/SCA engines (Semgrep, OpenGrep, Bandit, ESLint, SpotBugs+FindSecBugs, Trivy, detekt, gitleaks, gosec, hadolint), normalizes all results into one `Finding` schema, enforces a Quality Gate, and emits SARIF/CycloneDX SBOM/job-summary outputs. Runs only on Linux x64 (`assertSupportedPlatform` in [src/tools.ts](../src/tools.ts)).
+A native TypeScript GitHub Action (`src/main.ts` entry) that orchestrates multiple SAST/SCA engines (Semgrep, OpenGrep, Bandit, oxlint, ESLint, SpotBugs+FindSecBugs, Trivy, detekt, gitleaks, gosec, hadolint), normalizes all results into one `Finding` schema, enforces a Quality Gate, and emits SARIF/CycloneDX SBOM/job-summary outputs. Runs only on Linux x64 (`assertSupportedPlatform` in [src/tools.ts](../src/tools.ts)).
 
 ## Source of truth
 - `src/` is the editable implementation; `src/main.ts` is the action entrypoint and owns orchestration and final failure behavior.

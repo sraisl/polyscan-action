@@ -18,6 +18,12 @@ test("resolveEngines expands all case-insensitively without OpenGrep or truffleh
   assert.equal(resolveEngines("all").includes("trufflehog"), false);
 });
 
+test("resolveEngines all runs oxlint and leaves ESLint opt-in", () => {
+  assert.equal(resolveEngines("all").includes("oxlint"), true);
+  assert.equal(resolveEngines("all").includes("eslint"), false);
+  assert.deepEqual(unknownEngines(["eslint", "oxlint"]), []);
+});
+
 test("resolveEngines keeps explicit comma-separated selections", () => {
   assert.deepEqual(resolveEngines(" opengrep, gosec ,eslint "), [
     "opengrep",

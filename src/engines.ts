@@ -1,7 +1,7 @@
 export const DEFAULT_ENGINES = [
   "semgrep",
   "bandit",
-  "eslint",
+  "oxlint",
   "spotbugs",
   "trivy",
   "detekt",
@@ -17,6 +17,7 @@ export const SUPPORTED_ENGINES = [
   "opengrep",
   "bandit",
   "eslint",
+  "oxlint",
   "spotbugs",
   "trivy",
   "detekt",

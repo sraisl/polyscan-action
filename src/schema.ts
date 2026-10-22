@@ -20,7 +20,7 @@ export interface Finding {
   column?: number;
   cwe?: string; // e.g. "CWE-89"
   source?: string; // optional sub-source tag, e.g. "image:myapp:latest"
-  url?: string; // canonical advisory/details URL, only set when the engine itself provides one (e.g. Trivy's PrimaryURL)
+  url?: string; // canonical advisory/details URL, only set when the engine itself provides one (e.g. Trivy's PrimaryURL, oxlint's rule docs)
 }
 
 export interface EngineResult {
