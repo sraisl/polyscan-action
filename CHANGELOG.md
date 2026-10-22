@@ -13,6 +13,8 @@ tags and must not be reused or moved.
 
 ## [Unreleased]
 
+## [v17.0.0] - 2026-10-22
+
 ### Added
 
 - New `oxlint` engine for JavaScript/TypeScript (including JSX/TSX). It runs `no-eval`,
@@ -36,6 +38,8 @@ tags and must not be reused or moved.
 - Bandit and Semgrep reuse a preinstalled executable only when it reports the version pinned in
   `tools.lock.json`. A runner with a different version installed now gets the pinned release in an
   isolated environment instead, so scan results stay reproducible.
+- The SARIF driver and the CycloneDX SBOM tool entry report the release version (`17.0.0`)
+  instead of the placeholder `1.0.0` from `package.json`.
 
 ## [v16.1.0] - 2026-09-25
 

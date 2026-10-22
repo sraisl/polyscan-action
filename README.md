@@ -24,10 +24,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: sraisl/polyscan-action@v16
+      - uses: sraisl/polyscan-action@v17
         with:
           target: "."
-          engines: "semgrep,bandit,eslint,spotbugs"
+          engines: "semgrep,bandit,oxlint,spotbugs"
           max-critical: "0"
           max-high: "0"
           max-medium: "50"
@@ -109,7 +109,7 @@ rule for a workflow that intentionally uses version tags such as `actions/checko
 Copy that full ID into `semgrep-exclude-rules`:
 
 ```yaml
-- uses: sraisl/polyscan-action@v16
+- uses: sraisl/polyscan-action@v17
   with:
     engines: "semgrep,opengrep"
     opengrep-config: "auto"
@@ -200,7 +200,7 @@ maintains its own unrestricted rule set for exactly this reason.
 
 ## Versioning
 
-Releases are tagged as semver (`vX.Y.Z`) with a floating major tag (e.g. `v16`) that always points at the latest `v16.x.y` — pin `@v16` for automatic minor/patch updates, or pin an exact `@vX.Y.Z`. Tags `v1` through `v15` predate this scheme (plain incrementing integers, not semver) and are kept as-is for existing consumers; the new scheme starts at `v16` precisely to avoid colliding with any of them. New usage should pin `@v16` or later. See [CHANGELOG.md](CHANGELOG.md).
+Releases are tagged as semver (`vX.Y.Z`) with a floating major tag (e.g. `v16`) that always points at the latest `v16.x.y` — pin `@v16` for automatic minor/patch updates, or pin an exact `@vX.Y.Z`. Tags `v1` through `v15` predate this scheme (plain incrementing integers, not semver) and are kept as-is for existing consumers; the new scheme starts at `v16` precisely to avoid colliding with any of them. New usage should pin `@v17` or later. See [CHANGELOG.md](CHANGELOG.md).
 
 ## Releasing
 
