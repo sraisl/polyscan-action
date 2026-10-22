@@ -6,7 +6,7 @@ import * as path from "node:path";
 import { execFileSync } from "node:child_process";
 import * as tools from "../src/tools";
 import * as execution from "../src/exec";
-import { collectJsSources, hasJsSources, oxlintBatches, runOxlint } from "../src/engines/oxlint";
+import { collectJsSources, hasJsSources, isOxlintLintable, oxlintBatches, runOxlint } from "../src/engines/oxlint";
 import { normalizeFindingPath } from "../src/target";
 import { TOOLS } from "../src/tool-versions";
 
@@ -95,7 +95,7 @@ for (const failure of ["none", "process", "json"] as const) {
     const calls: string[][] = [];
     const configs: string[] = [];
     t.mock.method(execution, "run", async (_bin: string, args: string[], options: { cwd?: string }) => {
-      assert.equal(options.cwd, workspace);
+      assert.equal(options.cwd, path.dirname(args[1]));
       configs.push(args[1]);
       const files = args.slice(args.indexOf("--") + 1);
       calls.push(files);
@@ -141,4 +141,84 @@ test("pinned oxlint scans tracked ignored sources without following escaping sym
   const result = await runOxlint(".");
   assert.equal(result.status, "success");
   assert.deepEqual(result.findings.map((finding) => normalizeFindingPath(finding.file, workspace)).sort(), ["-leading.ts", "space name.ts", "tracked.ts"]);
+});
+
+function mockScan(t: TestContext, diagnostics: (files: string[]) => unknown[]) {
+  t.mock.method(execution, "resolvePinnedExecutable", async () => "/test/oxlint");
+  const calls: { files: string[]; cwd?: string; config: string }[] = [];
+  t.mock.method(execution, "run", async (_bin: string, args: string[], options: { cwd?: string }) => {
+    const files = args.slice(args.indexOf("--") + 1);
+    calls.push({ files, cwd: options.cwd, config: args[1] });
+    return { exitCode: 1, stderr: "", stdout: JSON.stringify({ diagnostics: diagnostics(files) }) };
+  });
+  return calls;
+}
+
+test("oxlint runs from its private config directory, never the scanned target", async (t) => {
+  const { workspace } = fixture(t);
+  fs.writeFileSync(path.join(workspace, "app.ts"), "eval(input);");
+  fs.writeFileSync(path.join(workspace, "oxlint-suppressions.json"), '{"app.ts":{"no-eval":{"count":1}}}');
+  const calls = mockScan(t, () => []);
+  assert.equal((await runOxlint(".")).status, "success");
+  assert.equal(calls.length, 1);
+  assert.notEqual(calls[0].cwd, workspace);
+  assert.equal(calls[0].cwd, path.dirname(calls[0].config));
+  assert.deepEqual(calls[0].files, [path.join(workspace, "app.ts")]);
+});
+
+test("isOxlintLintable mirrors oxlint's minified-name and case-sensitive extension filters", () => {
+  for (const name of ["app.ts", "App.tsx", "admin.js", "minimal.mjs", "a.min-x.cjs"]) assert.equal(isOxlintLintable(name), true, name);
+  for (const name of ["app.TSX", "App.Js", "lib.min.js", "auth-min.ts", "x_min.jsx"]) assert.equal(isOxlintLintable(name), false, name);
+});
+
+test("files oxlint would skip are not passed to it and are reported in the note", async (t) => {
+  const { workspace } = fixture(t);
+  for (const name of ["app.ts", "App.TSX", "auth-min.ts", "lib.min.js"]) fs.writeFileSync(path.join(workspace, name), "eval(input);");
+  const calls = mockScan(t, () => []);
+  const result = await runOxlint(".");
+  assert.equal(result.status, "success");
+  assert.deepEqual(calls.flatMap((call) => call.files), [path.join(workspace, "app.ts")]);
+  assert.equal(result.note, "3 file(s) not supported by oxlint and not scanned: App.TSX, auth-min.ts, lib.min.js");
+});
+
+test("findings are sorted by location and rule regardless of oxlint's output order", async (t) => {
+  const { workspace } = fixture(t);
+  for (const name of ["a.ts", "b.ts"]) fs.writeFileSync(path.join(workspace, name), "eval(input);");
+  const at = (file: string, line: number, column: number, code: string) => ({
+    code, severity: "error", message: code, filename: path.join(workspace, file),
+    labels: [{ span: { line, column } }],
+  });
+  mockScan(t, () => [
+    at("b.ts", 1, 1, "eslint(no-eval)"),
+    at("a.ts", 2, 1, "eslint(no-new-func)"),
+    at("a.ts", 1, 5, "eslint(no-eval)"),
+    at("a.ts", 1, 5, "eslint(no-script-url)"),
+    at("a.ts", 1, 1, "eslint(no-script-url)"),
+  ]);
+  const result = await runOxlint(".");
+  assert.deepEqual(
+    result.findings.map((finding) => `${path.basename(finding.file)}:${finding.line}:${finding.column} ${finding.ruleId}`),
+    ["a.ts:1:1 no-script-url", "a.ts:1:5 no-eval", "a.ts:1:5 no-script-url", "a.ts:2:1 no-new-func", "b.ts:1:1 no-eval"],
+  );
+});
+
+test("pinned oxlint ignores target suppressions, keeps nested target paths and reports skipped files", {
+  skip: !process.env.OXLINT_TEST_BINARY && "Set OXLINT_TEST_BINARY to the pinned oxlint executable",
+}, async (t) => {
+  const executable = fs.realpathSync(process.env.OXLINT_TEST_BINARY!);
+  const { root, workspace } = fixture(t);
+  const target = path.join(workspace, "src");
+  fs.mkdirSync(path.join(target, "src"), { recursive: true });
+  for (const file of ["src/app.ts", "auth-min.ts", "App.TSX"]) fs.writeFileSync(path.join(target, file), "eval(input);\n");
+  fs.writeFileSync(
+    path.join(target, "oxlint-suppressions.json"),
+    JSON.stringify({ "src/app.ts": { "no-eval": { count: 1 } }, "auth-min.ts": { "no-eval": { count: 1 } } }),
+  );
+  fs.symlinkSync(executable, path.join(root, "oxlint"));
+  process.env.PATH = `${root}${path.delimiter}${process.env.PATH ?? ""}`;
+  t.mock.method(tools, "cachedTool", async () => { throw new Error("pinned PATH binary must be reused"); });
+  const result = await runOxlint("src");
+  assert.equal(result.status, "success");
+  assert.deepEqual(result.findings.map((finding) => normalizeFindingPath(finding.file, target)), ["src/src/app.ts"]);
+  assert.equal(result.note, "2 file(s) not supported by oxlint and not scanned: App.TSX, auth-min.ts");
 });

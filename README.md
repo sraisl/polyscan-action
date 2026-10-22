@@ -85,7 +85,7 @@ jobs:
 | **Semgrep** | many | `--config auto` |
 | **OpenGrep** | many | opt-in; standalone, pinned Linux x64 binary; configurable via `opengrep-config` |
 | **Bandit** | Python | installed via pip on demand |
-| **oxlint** | JS/TS (incl. JSX/TSX) | `no-eval` / `no-implied-eval` / `no-new-func` / `no-script-url` / `react/no-danger`; standalone Linux x64 binary; parses TypeScript natively and reports files it cannot parse in the engine note |
+| **oxlint** | JS/TS (incl. JSX/TSX) | `no-eval` / `no-implied-eval` / `no-new-func` / `no-script-url` / `react/no-danger`; standalone Linux x64 binary; parses TypeScript natively; runs outside the target so a repository's `oxlint-suppressions.json` cannot hide findings; files it cannot parse or does not lint (minified names such as `*.min.js`, non-lowercase extensions) are listed in the engine note |
 | **ESLint** | JS | opt-in; superseded by oxlint. `no-eval` / `no-implied-eval` / `no-new-func`; its default parser cannot read TypeScript syntax, so `.ts`/`.tsx` files are not scanned |
 | **SpotBugs + FindSecBugs** | Java + Kotlin | **build-aware**: runs `mvn compile` / `gradle classes` when a build file is present (full dependency classpath), else falls back to direct `javac`/`kotlinc` |
 | **Trivy** | deps + IaC | SCA (vulnerable dependencies / CVEs) + misconfig; binary downloaded on demand |

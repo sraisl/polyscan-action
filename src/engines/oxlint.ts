@@ -59,6 +59,30 @@ export function hasJsSources(root: string): boolean {
   return collectJsSources(root).length > 0;
 }
 
+// oxlint 1.89.0 silently drops explicit paths it does not consider lintable (apps/oxlint/src/walk.rs):
+// names containing ".min.", "-min." or "_min.", and extensions that are not an exact lowercase match.
+export function isOxlintLintable(file: string): boolean {
+  const name = path.basename(file);
+  if ([".min.", "-min.", "_min."].some((marker) => name.includes(marker))) return false;
+  return SOURCE_EXTENSIONS.has(path.extname(name));
+}
+
+// oxlint's parallel workers emit diagnostics in completion order.
+function compareFindings(a: Finding, b: Finding): number {
+  return (
+    a.file.localeCompare(b.file) ||
+    a.line - b.line ||
+    (a.column ?? 0) - (b.column ?? 0) ||
+    a.ruleId.localeCompare(b.ruleId) ||
+    a.message.localeCompare(b.message)
+  );
+}
+
+function fileList(label: string, files: readonly string[], root: string): string {
+  const shown = files.slice(0, 5).map((file) => path.relative(root, file).split(path.sep).join("/"));
+  return `${files.length} file(s) ${label}: ${shown.join(", ")}${files.length > 5 ? ", …" : ""}`;
+}
+
 // Leave ample room for the inherited environment and argv pointers on runners.
 export function oxlintBatches(files: readonly string[], flags: readonly string[]): string[][] {
   const limit = 32 * 1024;
@@ -175,17 +199,23 @@ export async function runOxlint(target: string): Promise<EngineResult> {
     return { engine: "oxlint", findings: [], status: "failed", note: "oxlint not installed" };
   }
 
+  const lintable = files.filter(isOxlintLintable);
+  const unsupported = files.filter((file) => !isOxlintLintable(file));
   const workdir = fs.mkdtempSync(path.join(os.tmpdir(), "polyscan-oxlint-"));
   try {
     const configPath = path.join(workdir, "oxlintrc.json");
     fs.writeFileSync(configPath, JSON.stringify(CONFIG));
 
     // Nested project configs are disabled so a repository cannot switch the security rules off.
+    // oxlint runs from the private workdir, never the target: it loads oxlint-suppressions.json
+    // from its working directory, which would let a scanned repository hide findings. Running
+    // elsewhere also makes it report absolute filenames, which normalizeFindingPath resolves
+    // unambiguously (a target-relative "src/app.ts" under target "src" reads as workspace-relative).
     const flags = ["--config", configPath, "--disable-nested-config", "--no-ignore", "--format", "json", "--"];
     const findings: Finding[] = [];
     const parseErrorFiles = new Set<string>();
-    for (const batch of oxlintBatches(files, flags)) {
-      const res = await run(bin, [...flags, ...batch], { cwd: abs });
+    for (const batch of oxlintBatches(lintable, flags)) {
+      const res = await run(bin, [...flags, ...batch], { cwd: workdir });
       // oxlint exits 1 when it reports findings.
       if (![0, 1].includes(res.exitCode) || !res.stdout.trim()) {
         return {
@@ -211,16 +241,17 @@ export async function runOxlint(target: string): Promise<EngineResult> {
       findings.push(...report.findings);
       for (const file of report.parseErrorFiles) parseErrorFiles.add(file);
     }
-    const unparsed = [...parseErrorFiles].sort();
+    const notes = [
+      ...(parseErrorFiles.size > 0
+        ? [fileList("could not be parsed and were not scanned", [...parseErrorFiles].sort(), abs)]
+        : []),
+      ...(unsupported.length > 0 ? [fileList("not supported by oxlint and not scanned", unsupported, abs)] : []),
+    ];
     return {
       engine: "oxlint",
-      findings,
+      findings: findings.sort(compareFindings),
       status: "success",
-      ...(unparsed.length > 0
-        ? {
-            note: `${unparsed.length} file(s) could not be parsed and were not scanned: ${unparsed.slice(0, 5).join(", ")}`,
-          }
-        : {}),
+      ...(notes.length > 0 ? { note: notes.join("; ") } : {}),
     };
   } finally {
     fs.rmSync(workdir, { recursive: true, force: true });

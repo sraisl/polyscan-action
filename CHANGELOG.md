@@ -18,7 +18,9 @@ tags and must not be reused or moved.
 - New `oxlint` engine for JavaScript/TypeScript (including JSX/TSX). It runs `no-eval`,
   `no-implied-eval`, `no-new-func`, `no-script-url` and `react/no-danger` from a pinned,
   SHA-256-verified standalone binary, is skipped when no JS/TS files are present, and reports
-  files it cannot parse in the engine note instead of dropping them silently.
+  files it cannot parse or does not lint (minified names, non-lowercase extensions) in the engine
+  note instead of dropping them silently. It runs outside the scanned target, so a repository's
+  `oxlint-suppressions.json` cannot hide findings.
 
 ### Changed
 
