@@ -1,10 +1,11 @@
-import test from "node:test";
+import test, { mock } from "node:test";
 import assert from "node:assert/strict";
+import childProcess from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { ensurePythonTool, resolveExecutable, resolvePinnedExecutable } from "../src/exec";
+import { ensurePythonTool, resolveExecutable, resolvePinnedExecutable, run } from "../src/exec";
 
 function recordingCore() {
   const info: string[] = [];
@@ -185,4 +186,51 @@ test("ensurePythonTool ignores a preinstalled tool with a different version", as
     process.env.PATH = originalPath;
     fs.rmSync(directory, { recursive: true, force: true });
   }
+});
+
+function textBusy(): NodeJS.ErrnoException {
+  const err = new Error("spawn ETXTBSY") as NodeJS.ErrnoException;
+  err.code = "ETXTBSY";
+  return err;
+}
+
+test("run retries a spawn that fails with ETXTBSY", async (t) => {
+  const original = childProcess.spawn;
+  let calls = 0;
+  const spawn = mock.method(childProcess, "spawn", ((...args: Parameters<typeof original>) => {
+    calls++;
+    if (calls < 3) throw textBusy();
+    return original(...args);
+  }) as typeof original);
+  t.after(() => spawn.mock.restore());
+
+  const result = await run(process.execPath, ["-e", "process.stdout.write('ok')"]);
+
+  assert.equal(calls, 3);
+  assert.deepEqual(result, { exitCode: 0, stdout: "ok", stderr: "" });
+});
+
+test("run reports a persistent ETXTBSY as a failed command instead of crashing", async (t) => {
+  const spawn = mock.method(childProcess, "spawn", (() => {
+    throw textBusy();
+  }) as unknown as typeof childProcess.spawn);
+  t.after(() => spawn.mock.restore());
+
+  const result = await run("scanner", ["--version"]);
+
+  assert.equal(spawn.mock.callCount(), 5);
+  assert.equal(result.exitCode, 127);
+  assert.match(result.stderr, /ETXTBSY/);
+});
+
+test("run captures output and exit codes and reports missing executables", async () => {
+  const result = await run(process.execPath, [
+    "-e",
+    "process.stdout.write(process.env.POLYSCAN_TEST); process.stderr.write('warn'); process.exit(3)",
+  ], { env: { POLYSCAN_TEST: "value" } });
+  assert.deepEqual(result, { exitCode: 3, stdout: "value", stderr: "warn" });
+
+  const missing = await run(path.join(os.tmpdir(), "polyscan-missing-binary"), []);
+  assert.equal(missing.exitCode, 127);
+  assert.match(missing.stderr, /ENOENT/);
 });
