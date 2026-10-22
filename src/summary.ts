@@ -33,7 +33,7 @@ function textCell(value: string): string {
 // Keyed by EngineName (not a bare string) so a typo in an engine key fails to
 // compile instead of silently never matching.
 // Only link when a canonical URL can be derived with confidence: a fixed
-// engine-doc naming convention. Engine-supplied advisory URLs (Trivy) and the
+// engine-doc naming convention. Engine-supplied URLs (Trivy, oxlint) and the
 // CWE fallback are handled separately in findingUrl().
 const ENGINE_RULE_URL: Partial<Record<EngineName, (ruleId: string) => string | undefined>> = {
   hadolint: (ruleId) => {
@@ -47,7 +47,7 @@ const ENGINE_RULE_URL: Partial<Record<EngineName, (ruleId: string) => string | u
     ruleId.startsWith("zizmor/") ? `https://docs.zizmor.sh/audits/#${ruleId.slice("zizmor/".length)}` : undefined,
 };
 
-// finding.url is engine-supplied (currently only Trivy's PrimaryURL) and not
+// finding.url is engine-supplied (Trivy's PrimaryURL, oxlint's rule docs) and not
 // type-enforced beyond "string" — reject anything that isn't a well-formed
 // http(s) URL rather than rendering it as a link destination.
 function isHttpUrl(value: string): boolean {

@@ -9,6 +9,7 @@ import { runSemgrep } from "./engines/semgrep";
 import { runOpengrep } from "./engines/opengrep";
 import { runBandit } from "./engines/bandit";
 import { runEslint } from "./engines/eslint";
+import { runOxlint } from "./engines/oxlint";
 import { runSpotbugs } from "./engines/spotbugs";
 import { runTrivy } from "./engines/trivy";
 import { runDetekt } from "./engines/detekt";
@@ -119,6 +120,8 @@ async function runEngine(
         return await runBandit(target);
       case "eslint":
         return await runEslint(target);
+      case "oxlint":
+        return await runOxlint(target);
       case "spotbugs":
         return await runSpotbugs(target);
       case "trivy":

@@ -1,6 +1,6 @@
 # PolyScan Action
 
-**Multi-language SAST as a native GitHub Action.** One step runs all configured security engines — Semgrep, OpenGrep, Bandit, ESLint, SpotBugs, detekt, gosec, Trivy, gitleaks, betterleaks, hadolint and zizmor — normalizes every result into a single schema, enforces a configurable **Quality Gate**, and emits **SARIF**, a **CycloneDX SBOM** and a rich **job summary** — plus optional artifact upload.
+**Multi-language SAST as a native GitHub Action.** One step runs all configured security engines — Semgrep, OpenGrep, Bandit, oxlint, ESLint, SpotBugs, detekt, gosec, Trivy, gitleaks, betterleaks, hadolint and zizmor — normalizes every result into a single schema, enforces a configurable **Quality Gate**, and emits **SARIF**, a **CycloneDX SBOM** and a rich **job summary** — plus optional artifact upload.
 
 Written in TypeScript, bundled with `@vercel/ncc`, runs as a native GitHub Action on the `node24` runtime.
 
@@ -27,7 +27,7 @@ jobs:
       - uses: sraisl/polyscan-action@v16
         with:
           target: "."
-          engines: "semgrep,bandit,eslint,spotbugs"
+          engines: "semgrep,bandit,oxlint,spotbugs"
           max-critical: "0"
           max-high: "0"
           max-medium: "50"
@@ -49,7 +49,7 @@ jobs:
 | Input | Default | Description |
 |---|---|---|
 | `target` | `.` | Workspace-contained directory to scan |
-| `engines` | `all` | `all` or comma-separated engines: `semgrep,opengrep,bandit,eslint,spotbugs,trivy,detekt,gitleaks,betterleaks,gosec,hadolint,zizmor,trufflehog`. OpenGrep and trufflehog are opt-in and are not included by `all`. |
+| `engines` | `all` | `all` or comma-separated engines: `semgrep,opengrep,bandit,eslint,oxlint,spotbugs,trivy,detekt,gitleaks,betterleaks,gosec,hadolint,zizmor,trufflehog`. OpenGrep, ESLint and trufflehog are opt-in and are not included by `all`. |
 | `opengrep-config` | `auto` | OpenGrep rules config: `auto`, a local path, URL, or registry ID |
 | `semgrep-exclude-rules` | _(empty)_ | Comma-separated Semgrep rule IDs to exclude; other rules still scan the same files |
 | `opengrep-exclude-rules` | _(empty)_ | Comma-separated OpenGrep rule IDs to exclude; other rules still scan the same files |
@@ -85,7 +85,8 @@ jobs:
 | **Semgrep** | many | `--config auto` |
 | **OpenGrep** | many | opt-in; standalone, pinned Linux x64 binary; configurable via `opengrep-config` |
 | **Bandit** | Python | installed via pip on demand |
-| **ESLint** | JS/TS | `no-eval` / `no-implied-eval` / `no-new-func` |
+| **oxlint** | JS/TS (incl. JSX/TSX) | `no-eval` / `no-implied-eval` / `no-new-func` / `no-script-url` / `react/no-danger`; standalone Linux x64 binary; parses TypeScript natively and reports files it cannot parse in the engine note |
+| **ESLint** | JS | opt-in; superseded by oxlint. `no-eval` / `no-implied-eval` / `no-new-func`; its default parser cannot read TypeScript syntax, so `.ts`/`.tsx` files are not scanned |
 | **SpotBugs + FindSecBugs** | Java + Kotlin | **build-aware**: runs `mvn compile` / `gradle classes` when a build file is present (full dependency classpath), else falls back to direct `javac`/`kotlinc` |
 | **Trivy** | deps + IaC | SCA (vulnerable dependencies / CVEs) + misconfig; binary downloaded on demand |
 | **detekt** | Kotlin | Kotlin-native static analysis (incl. security rules) via detekt CLI; SARIF parsed |
@@ -98,7 +99,7 @@ jobs:
 
 Python engines are installed into isolated, version-pinned environments. OpenGrep does not require Python: PolyScan uses the exact pinned executable from `PATH` when available, otherwise it downloads and caches a SHA-256-verified standalone binary. Other downloaded tools are also cached and verified with SHA-256. SpotBugs is **build-aware** — for real Java/Kotlin projects it invokes the project's own build (Maven/Gradle) so the full dependency classpath is available, which is required to detect data-flow bugs (SQLi, command injection) on **Java** (FindSecBugs does not target Kotlin bytecode). For **Kotlin** code-security use **detekt**, which analyzes Kotlin source natively. gosec is downloaded only when Go files are present and requires the Go toolchain available on the runner. Trivy runs `--offline-scan` to avoid Maven Central rate limits.
 
-**Default: `engines: "all"` expands to** `semgrep,bandit,eslint,spotbugs,trivy,detekt,gitleaks,betterleaks,gosec,hadolint,zizmor`. Each language-specific engine (gosec, detekt, hadolint, zizmor, …) runs a quick file-presence check and is skipped with no findings and no download when its file type isn't present, so `all` stays cheap on repositories that don't use that language. OpenGrep and trufflehog are explicit opt-ins and can be selected with `engines: "opengrep,trufflehog"` or combined with other engines.
+**Default: `engines: "all"` expands to** `semgrep,bandit,oxlint,spotbugs,trivy,detekt,gitleaks,betterleaks,gosec,hadolint,zizmor`. Each language-specific engine (oxlint, gosec, detekt, hadolint, zizmor, …) runs a quick file-presence check and is skipped with no findings and no download when its file type isn't present, so `all` stays cheap on repositories that don't use that language. OpenGrep, ESLint and trufflehog are explicit opt-ins and can be selected with `engines: "opengrep,trufflehog"` or combined with other engines.
 
 `opengrep-config: "auto"` loads OpenGrep's automatic rules configuration and can require network access. Use a repository-local rule file, for example `opengrep-config: ".opengrep/rules.yml"`, for deterministic and offline-friendly scans.
 
@@ -174,7 +175,7 @@ MIT, Apache-2.0, ISC, BSD-3-Clause, BlueOak-1.0.0, 0BSD, and CC0; that file, not
 the authoritative list). The scan engines below are **not** bundled or vendored: PolyScan installs
 each one from its official distribution channel at scan time and invokes it as a separate
 subprocess — PolyScan never links against or redistributes their code. Binary/archive downloads
-(betterleaks, detekt, gitleaks, gosec, hadolint, the Kotlin compiler, opengrep, SpotBugs/FindSecBugs, Trivy,
+(betterleaks, detekt, gitleaks, gosec, hadolint, the Kotlin compiler, opengrep, oxlint, SpotBugs/FindSecBugs, Trivy,
 trufflehog, zizmor) are SHA-256-verified against `tools.lock.json`; Semgrep and Bandit are
 installed via `pip install <tool>==<version>` and ESLint via `npm install eslint@<version>`,
 pinned to an exact version but relying on PyPI/npm registry integrity rather than PolyScan's own
@@ -182,7 +183,7 @@ checksum verification.
 
 | Engine | License |
 |---|---|
-| ESLint, gitleaks, betterleaks, zizmor | MIT |
+| oxlint, ESLint, gitleaks, betterleaks, zizmor | MIT |
 | Bandit, gosec, detekt, Kotlin compiler, Trivy | Apache-2.0 |
 | Semgrep, OpenGrep, SpotBugs | LGPL-2.1 |
 | FindSecBugs | LGPL-3.0 |

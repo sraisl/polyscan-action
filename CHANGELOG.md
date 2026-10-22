@@ -13,6 +13,22 @@ tags and must not be reused or moved.
 
 ## [Unreleased]
 
+### Added
+
+- New `oxlint` engine for JavaScript/TypeScript (including JSX/TSX). It runs `no-eval`,
+  `no-implied-eval`, `no-new-func`, `no-script-url` and `react/no-danger` from a pinned,
+  SHA-256-verified standalone binary, is skipped when no JS/TS files are present, and reports
+  files it cannot parse in the engine note instead of dropping them silently.
+
+### Changed
+
+- `engines: "all"` now runs `oxlint` instead of `eslint`. ESLint stays available as an opt-in
+  engine (`engines: "eslint,..."`) but its default parser cannot read TypeScript syntax, so it
+  never reported findings in `.ts`/`.tsx` files. Findings now carry `oxlint/<rule>` rule IDs, so
+  existing code scanning alerts from `eslint/<rule>` close and reopen under the new IDs.
+- `npm run engines:check` finds the latest release of a tool in a monorepo that publishes several
+  products (such as `oxc-project/oxc`) by matching the tool's tag template.
+
 ### Fixed
 
 - Bandit and Semgrep reuse a preinstalled executable only when it reports the version pinned in

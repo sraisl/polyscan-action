@@ -75,6 +75,14 @@
       "assetTemplate": "opengrep_manylinux_x86",
       "sha256": "35779bdd72e92129c8df2a77f0c55e8c08356801ea92591ef32108d6b28d564c"
     },
+    "oxlint": {
+      "provider": "github",
+      "repository": "oxc-project/oxc",
+      "version": "1.89.0",
+      "tagTemplate": "oxlint_v{version}",
+      "assetTemplate": "oxlint-x86_64-unknown-linux-gnu.tar.gz",
+      "sha256": "88492c336807a34062fa540416fe75037c04bcce1ed77824e3db3aaec215949a"
+    },
     "semgrep": {
       "provider": "pypi",
       "package": "semgrep",

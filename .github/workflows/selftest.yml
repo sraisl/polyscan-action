@@ -59,6 +59,21 @@ jobs:
             }
           '
 
+      - name: Assert oxlint scans TypeScript
+        run: |
+          node -e '
+            const fs = require("node:fs");
+            const sarif = JSON.parse(fs.readFileSync("polyscan.sarif", "utf8"));
+            const finding = sarif.runs.flatMap(run => run.results ?? []).find(result =>
+              result.ruleId === "oxlint/no-eval" &&
+              result.locations?.[0]?.physicalLocation?.artifactLocation?.uri === "test-fixtures/src/vuln.ts"
+            );
+            if (!finding) {
+              console.error("expected an oxlint/no-eval finding in test-fixtures/src/vuln.ts");
+              process.exit(1);
+            }
+          '
+
       - name: Upload SARIF to code scanning
         if: always()
         continue-on-error: true   # code scanning needs GHAS (not on private repos without it)

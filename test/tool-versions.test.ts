@@ -19,6 +19,7 @@ const EXPECTED_TOOLS = [
   "hadolint",
   "kotlin",
   "opengrep",
+  "oxlint",
   "semgrep",
   "spotbugs",
   "trivy",
@@ -44,6 +45,7 @@ test("downloaded binary tools have pinned SHA-256 digests", () => {
     "hadolint",
     "kotlin",
     "opengrep",
+    "oxlint",
     "spotbugs",
     "trivy",
     "trufflehog",
@@ -73,6 +75,10 @@ test("tool metadata expands to the existing download URLs", () => {
   assert.equal(
     githubReleaseUrl(TOOLS.hadolint),
     `https://github.com/hadolint/hadolint/releases/download/v${TOOLS.hadolint.version}/hadolint-linux-x86_64`,
+  );
+  assert.equal(
+    githubReleaseUrl(TOOLS.oxlint),
+    `https://github.com/oxc-project/oxc/releases/download/oxlint_v${TOOLS.oxlint.version}/oxlint-x86_64-unknown-linux-gnu.tar.gz`,
   );
   assert.equal(
     mavenArtifactUrl(TOOLS.findsecbugs),
