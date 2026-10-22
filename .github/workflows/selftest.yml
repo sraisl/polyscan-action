@@ -64,12 +64,17 @@ jobs:
           node -e '
             const fs = require("node:fs");
             const sarif = JSON.parse(fs.readFileSync("polyscan.sarif", "utf8"));
-            const finding = sarif.runs.flatMap(run => run.results ?? []).find(result =>
-              result.ruleId === "oxlint/no-eval" &&
-              result.locations?.[0]?.physicalLocation?.artifactLocation?.uri === "test-fixtures/src/vuln.ts"
+            const results = sarif.runs.flatMap(run => run.results ?? []);
+            const has = (ruleId, uri) => results.some(result =>
+              result.ruleId === ruleId &&
+              result.locations?.[0]?.physicalLocation?.artifactLocation?.uri === uri
             );
-            if (!finding) {
-              console.error("expected an oxlint/no-eval finding in test-fixtures/src/vuln.ts");
+            const missing = [
+              ["oxlint/no-eval", "test-fixtures/src/vuln.ts"],
+              ["oxlint/no-implied-eval", "test-fixtures/vuln.js"],
+            ].filter(([ruleId, uri]) => !has(ruleId, uri));
+            if (missing.length) {
+              console.error("missing oxlint findings:", missing);
               process.exit(1);
             }
           '

@@ -222,3 +222,23 @@ test("pinned oxlint ignores target suppressions, keeps nested target paths and r
   assert.deepEqual(result.findings.map((finding) => normalizeFindingPath(finding.file, target)), ["src/src/app.ts"]);
   assert.equal(result.note, "2 file(s) not supported by oxlint and not scanned: App.TSX, auth-min.ts");
 });
+
+test("pinned oxlint reports global eval and string timers from the browser and node environments", {
+  skip: !process.env.OXLINT_TEST_BINARY && "Set OXLINT_TEST_BINARY to the pinned oxlint executable",
+}, async (t) => {
+  const executable = fs.realpathSync(process.env.OXLINT_TEST_BINARY!);
+  const { root, workspace } = fixture(t);
+  fs.writeFileSync(
+    path.join(workspace, "globals.js"),
+    ["window.eval(a);", "global.eval(b);", 'setTimeout("alert(1)", 1);', 'setInterval("tick()", 5);'].join("\n"),
+  );
+  fs.symlinkSync(executable, path.join(root, "oxlint"));
+  process.env.PATH = `${root}${path.delimiter}${process.env.PATH ?? ""}`;
+  t.mock.method(tools, "cachedTool", async () => { throw new Error("pinned PATH binary must be reused"); });
+  const result = await runOxlint(".");
+  assert.equal(result.status, "success");
+  assert.deepEqual(
+    result.findings.map((finding) => `${finding.line} ${finding.ruleId}`),
+    ["1 no-eval", "2 no-eval", "3 no-implied-eval", "4 no-implied-eval"],
+  );
+});

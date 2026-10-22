@@ -19,8 +19,11 @@ const SOURCE_EXTENSIONS = new Set([".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx",
 // Every default category is switched off so only the explicit security rules run.
 // react/jsx-no-script-url is left out on purpose: no-script-url already reports the same
 // `javascript:` URL, and enabling both would count one issue twice in the Quality Gate.
+// The browser and node environments are required: without them oxlint only knows ECMAScript
+// built-ins, so no-eval misses window.eval/global.eval and no-implied-eval never sees the timers.
 const CONFIG = {
   plugins: ["react"],
+  env: { builtin: true, browser: true, node: true },
   categories: {
     correctness: "off",
     suspicious: "off",

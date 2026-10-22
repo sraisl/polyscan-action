@@ -27,7 +27,7 @@ jobs:
       - uses: sraisl/polyscan-action@v16
         with:
           target: "."
-          engines: "semgrep,bandit,oxlint,spotbugs"
+          engines: "semgrep,bandit,eslint,spotbugs"
           max-critical: "0"
           max-high: "0"
           max-medium: "50"
