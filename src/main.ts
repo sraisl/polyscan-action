@@ -28,6 +28,7 @@ import { normalizeFindingPath, resolveOutputDir, resolveTarget } from "./target"
 import { assertSupportedPlatform } from "./tools";
 import { mapConcurrentWithBarriers, parseMaxConcurrency } from "./scheduler";
 import { parseExcludedRules } from "./rule-exclusions";
+import { DEFAULT_ARTIFACT_NAME, uploadWithUniqueName } from "./artifact";
 
 const DEFAULT_MAX_CONCURRENCY = 2;
 
@@ -52,6 +53,7 @@ interface ActionConfig {
   wantSarif: boolean;
   wantSbom: boolean;
   uploadArtifacts: boolean;
+  artifactName: string;
   uploadSarif: boolean;
   maxConcurrency: number;
   outputDir: string;
@@ -83,6 +85,7 @@ function readConfig(): ActionConfig {
     wantSarif: boolInput("sarif", true),
     wantSbom: boolInput("sbom", false),
     uploadArtifacts: boolInput("upload-artifacts", true),
+    artifactName: core.getInput("artifact-name") || DEFAULT_ARTIFACT_NAME,
     uploadSarif: boolInput("upload-sarif", false),
     maxConcurrency: parseMaxConcurrency(
       core.getInput("max-concurrency"),
@@ -242,11 +245,16 @@ async function publishSummary(summary: string): Promise<void> {
   }
 }
 
-async function uploadReports(files: string[], outputDir: string): Promise<void> {
+async function uploadReports(files: string[], outputDir: string, artifactName: string): Promise<void> {
   try {
     const client = new DefaultArtifactClient();
-    await client.uploadArtifact("polyscan-reports", files, outputDir, { retentionDays: 30 });
-    core.info(`Uploaded ${files.length} report artifact(s).`);
+    const name = await uploadWithUniqueName(artifactName, async (candidate) => {
+      await client.uploadArtifact(candidate, files, outputDir, { retentionDays: 30 });
+    });
+    if (name !== artifactName) {
+      core.info(`Artifact name "${artifactName}" already used in this workflow run; uploaded as "${name}".`);
+    }
+    core.info(`Uploaded ${files.length} report file(s) as artifact "${name}".`);
   } catch (err) {
     core.warning(`artifact upload failed: ${String(err).slice(0, 200)}`);
   }
@@ -313,7 +321,7 @@ async function main(): Promise<void> {
   await publishSummary(summary);
   const reports = writeReports(config, findings, summary);
   if (config.uploadArtifacts && reports.files.length > 0) {
-    await uploadReports(reports.files, config.outputDir);
+    await uploadReports(reports.files, config.outputDir, config.artifactName);
   }
   if (config.uploadSarif && reports.sarifPath) {
     core.info(

@@ -87947,6 +87947,63 @@ ZipStream.prototype.finalize = function() {
 
 /***/ }),
 
+/***/ 15849:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+// Workflow artifact naming. Artifact names must be unique per workflow run, so
+// several PolyScan steps (matrix legs, separate jobs, a second step in the same
+// job) would otherwise collide on the same name with a 409 Conflict.
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.DEFAULT_ARTIFACT_NAME = void 0;
+exports.sanitizeArtifactName = sanitizeArtifactName;
+exports.isArtifactNameConflict = isArtifactNameConflict;
+exports.artifactNameCandidates = artifactNameCandidates;
+exports.uploadWithUniqueName = uploadWithUniqueName;
+exports.DEFAULT_ARTIFACT_NAME = "polyscan-reports";
+const MAX_NAME_ATTEMPTS = 10;
+// Characters the artifact service rejects in names.
+const INVALID_NAME_CHARS = /["':<>|*?\\/\r\n]/g;
+function sanitizeArtifactName(name) {
+    return name.replace(INVALID_NAME_CHARS, "-").trim();
+}
+function isArtifactNameConflict(err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return /\(409\)|already exists/i.test(message);
+}
+// Name to try for each upload attempt: the requested name first, then the same
+// name qualified with the job id and a counter.
+function artifactNameCandidates(base, job = process.env.GITHUB_JOB) {
+    const name = sanitizeArtifactName(base) || exports.DEFAULT_ARTIFACT_NAME;
+    const qualified = job ? `${name}-${sanitizeArtifactName(job)}` : name;
+    const candidates = [name];
+    if (qualified !== name)
+        candidates.push(qualified);
+    for (let n = 2; candidates.length < MAX_NAME_ATTEMPTS; n++) {
+        candidates.push(`${qualified}-${n}`);
+    }
+    return candidates;
+}
+async function uploadWithUniqueName(base, upload, job = process.env.GITHUB_JOB) {
+    let lastError;
+    for (const name of artifactNameCandidates(base, job)) {
+        try {
+            await upload(name);
+            return name;
+        }
+        catch (err) {
+            if (!isArtifactNameConflict(err))
+                throw err;
+            lastError = err;
+        }
+    }
+    throw lastError;
+}
+
+
+/***/ }),
+
 /***/ 62616:
 /***/ ((__unused_webpack_module, exports) => {
 
@@ -90784,6 +90841,7 @@ const target_1 = __nccwpck_require__(76746);
 const tools_1 = __nccwpck_require__(51732);
 const scheduler_1 = __nccwpck_require__(5622);
 const rule_exclusions_1 = __nccwpck_require__(19715);
+const artifact_2 = __nccwpck_require__(15849);
 const DEFAULT_MAX_CONCURRENCY = 2;
 function boolInput(name, def) {
     const raw = core.getInput(name);
@@ -90812,6 +90870,7 @@ function readConfig() {
         wantSarif: boolInput("sarif", true),
         wantSbom: boolInput("sbom", false),
         uploadArtifacts: boolInput("upload-artifacts", true),
+        artifactName: core.getInput("artifact-name") || artifact_2.DEFAULT_ARTIFACT_NAME,
         uploadSarif: boolInput("upload-sarif", false),
         maxConcurrency: (0, scheduler_1.parseMaxConcurrency)(core.getInput("max-concurrency"), DEFAULT_MAX_CONCURRENCY, engines_1.SUPPORTED_ENGINES.length),
         outputDir: (0, target_1.resolveOutputDir)(core.getInput("output-dir") || "."),
@@ -90933,11 +90992,16 @@ async function publishSummary(summary) {
         core.warning(`could not write job summary: ${String(err).slice(0, 150)}`);
     }
 }
-async function uploadReports(files, outputDir) {
+async function uploadReports(files, outputDir, artifactName) {
     try {
         const client = new artifact_1.DefaultArtifactClient();
-        await client.uploadArtifact("polyscan-reports", files, outputDir, { retentionDays: 30 });
-        core.info(`Uploaded ${files.length} report artifact(s).`);
+        const name = await (0, artifact_2.uploadWithUniqueName)(artifactName, async (candidate) => {
+            await client.uploadArtifact(candidate, files, outputDir, { retentionDays: 30 });
+        });
+        if (name !== artifactName) {
+            core.info(`Artifact name "${artifactName}" already used in this workflow run; uploaded as "${name}".`);
+        }
+        core.info(`Uploaded ${files.length} report file(s) as artifact "${name}".`);
     }
     catch (err) {
         core.warning(`artifact upload failed: ${String(err).slice(0, 200)}`);
@@ -90991,7 +91055,7 @@ async function main() {
     await publishSummary(summary);
     const reports = writeReports(config, findings, summary);
     if (config.uploadArtifacts && reports.files.length > 0) {
-        await uploadReports(reports.files, config.outputDir);
+        await uploadReports(reports.files, config.outputDir, config.artifactName);
     }
     if (config.uploadSarif && reports.sarifPath) {
         core.info("upload-sarif=true: use a follow-up 'github/codeql-action/upload-sarif' step " +
