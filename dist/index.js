@@ -91005,7 +91005,8 @@ async function uploadReports(files, outputDir, artifactName) {
             await client.uploadArtifact(candidate, files, outputDir, { retentionDays: 30 });
         });
         if (name !== artifactName) {
-            core.info(`Artifact name "${artifactName}" already used in this workflow run; uploaded as "${name}".`);
+            core.info(`Requested artifact name "${artifactName}" was adjusted (invalid characters or name already ` +
+                `used in this workflow run); uploaded as "${name}".`);
         }
         core.info(`Uploaded ${files.length} report file(s) as artifact "${name}".`);
     }
