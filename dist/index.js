@@ -87948,7 +87948,7 @@ ZipStream.prototype.finalize = function() {
 /***/ }),
 
 /***/ 15849:
-/***/ ((__unused_webpack_module, exports) => {
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
 "use strict";
 
@@ -87961,10 +87961,16 @@ exports.sanitizeArtifactName = sanitizeArtifactName;
 exports.isArtifactNameConflict = isArtifactNameConflict;
 exports.artifactNameCandidates = artifactNameCandidates;
 exports.uploadWithUniqueName = uploadWithUniqueName;
+const node_crypto_1 = __nccwpck_require__(77598);
 exports.DEFAULT_ARTIFACT_NAME = "polyscan-reports";
-const MAX_NAME_ATTEMPTS = 10;
+// Matrix legs share GITHUB_JOB, so fallbacks past the job-qualified name carry a
+// random suffix; a fixed counter would run out once enough legs had uploaded.
+const RANDOM_NAME_ATTEMPTS = 3;
 // Characters the artifact service rejects in names.
-const INVALID_NAME_CHARS = /["':<>|*?\\/\r\n]/g;
+const INVALID_NAME_CHARS = /[":<>|*?\\/\r\n]/g;
+function randomSuffix() {
+    return (0, node_crypto_1.randomBytes)(4).toString("hex");
+}
 function sanitizeArtifactName(name) {
     return name.replace(INVALID_NAME_CHARS, "-").trim();
 }
@@ -87973,21 +87979,21 @@ function isArtifactNameConflict(err) {
     return /\(409\)|already exists/i.test(message);
 }
 // Name to try for each upload attempt: the requested name first, then the same
-// name qualified with the job id and a counter.
-function artifactNameCandidates(base, job = process.env.GITHUB_JOB) {
+// name qualified with the job id, then that qualified name with random suffixes.
+function artifactNameCandidates(base, job = process.env.GITHUB_JOB, suffix = randomSuffix) {
     const name = sanitizeArtifactName(base) || exports.DEFAULT_ARTIFACT_NAME;
     const qualified = job ? `${name}-${sanitizeArtifactName(job)}` : name;
     const candidates = [name];
     if (qualified !== name)
         candidates.push(qualified);
-    for (let n = 2; candidates.length < MAX_NAME_ATTEMPTS; n++) {
-        candidates.push(`${qualified}-${n}`);
+    for (let n = 0; n < RANDOM_NAME_ATTEMPTS; n++) {
+        candidates.push(`${qualified}-${suffix()}`);
     }
     return candidates;
 }
-async function uploadWithUniqueName(base, upload, job = process.env.GITHUB_JOB) {
+async function uploadWithUniqueName(base, upload, job = process.env.GITHUB_JOB, suffix = randomSuffix) {
     let lastError;
-    for (const name of artifactNameCandidates(base, job)) {
+    for (const name of artifactNameCandidates(base, job, suffix)) {
         try {
             await upload(name);
             return name;
