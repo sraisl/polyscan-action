@@ -13,6 +13,20 @@ tags and must not be reused or moved.
 
 ## [Unreleased]
 
+## [v17.1.0] - 2026-10-23
+
+### Added
+
+- New `artifact-name` input (default `polyscan-reports`) to choose the name of the uploaded report
+  artifact, e.g. one name per matrix leg.
+
+### Fixed
+
+- The report upload no longer fails with `(409) Conflict: an artifact with this name already
+  exists on the workflow run` when PolyScan runs more than once in a workflow run (matrix legs,
+  several jobs or steps). If the requested name is taken, the upload falls back to
+  `<name>-<job>` and then to `<name>-<job>-<random>`; the log names the artifact actually used.
+
 ## [v17.0.1] - 2026-10-22
 
 ### Fixed
