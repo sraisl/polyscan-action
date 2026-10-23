@@ -62,6 +62,7 @@ jobs:
 | `sarif` | `true` | Write `polyscan.sarif` (SARIF 2.1.0) |
 | `sbom` | `false` | Write `polyscan.sbom.json` (CycloneDX 1.5) |
 | `upload-artifacts` | `true` | Upload SARIF + SBOM + summary as a workflow artifact |
+| `artifact-name` | `polyscan-reports` | Artifact name; falls back to `<name>-<job>`, then `<name>-<job>-<random>`, if the name is already taken in the workflow run (matrix, several PolyScan steps) |
 | `upload-sarif` | `false` | Emit a hint to upload SARIF to code scanning (use the CodeQL step) |
 | `trivy-image` | _(empty)_ | Docker image to scan with `trivy image` (e.g. `myapp:latest`). Image must be available in the local Docker daemon. Runs in addition to the filesystem scan. |
 | `output-dir` | `.` | Workspace-contained directory for generated reports |
