@@ -26,6 +26,11 @@ tags and must not be reused or moved.
   `partialFingerprints` entry; engine versions are listed under `tool.extensions` and engine failures or skip
   reasons under `invocations`.
 
+### Security
+
+- Bundled `undici` raised to 6.29.1 (GHSA-4qv8-2p9j-2685, GHSA-xjj6-f33q-929c: denial of service via the
+  EventSource parser and excessive content-encodings).
+
 ## [v17.1.0] - 2026-10-23
 
 ### Added
