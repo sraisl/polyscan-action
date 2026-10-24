@@ -13,6 +13,19 @@ tags and must not be reused or moved.
 
 ## [Unreleased]
 
+### Added
+
+- New JSON report `polyscan-report.json` (input `json-report`, default `true`; output `json-file`) with the scan
+  context, Quality Gate thresholds and result, per-engine status, tool version, duration and severity counts, and all
+  findings. It is included in the uploaded artifact.
+- The job summary shows the scanned target, commit, total duration and PolyScan version. The engine list is now a
+  table with each engine's pinned tool version, duration and findings per severity. The Quality Gate section lists
+  found vs. allowed counts per gated severity.
+- SARIF rules carry `security-severity`, `security`/CWE tags, a default level and `helpUri` where known, so GitHub
+  Code Scanning shows severities and links to rule documentation. Results carry a line-independent
+  `partialFingerprints` entry; engine versions are listed under `tool.extensions` and engine failures or skip
+  reasons under `invocations`.
+
 ## [v17.1.0] - 2026-10-23
 
 ### Added

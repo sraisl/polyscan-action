@@ -90773,7 +90773,56 @@ function evaluateGate(findings, cfg) {
     if (counts.medium > cfg.maxMedium) {
         reasons.push(`${counts.medium} medium (max ${cfg.maxMedium})`);
     }
-    return { passed: reasons.length === 0, counts, reasons };
+    return { passed: reasons.length === 0, counts, thresholds: { ...cfg }, reasons };
+}
+
+
+/***/ }),
+
+/***/ 73346:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.findingUrl = findingUrl;
+// Keyed by EngineName (not a bare string) so a typo in an engine key fails to
+// compile instead of silently never matching.
+// Only link when a canonical URL can be derived with confidence: a fixed
+// engine-doc naming convention. Engine-supplied URLs (Trivy, oxlint) and the
+// CWE fallback are handled separately in findingUrl().
+const ENGINE_RULE_URL = {
+    hadolint: (ruleId) => {
+        if (/^DL\d+$/.test(ruleId))
+            return `https://github.com/hadolint/hadolint/wiki/${ruleId}`;
+        if (/^SC\d+$/.test(ruleId))
+            return `https://www.shellcheck.net/wiki/${ruleId}`;
+        return undefined;
+    },
+    gosec: (ruleId) => (/^G\d+$/.test(ruleId) ? `https://securego.io/docs/rules/${ruleId.toLowerCase()}.html` : undefined),
+    eslint: (ruleId) => (ruleId.includes("/") ? undefined : `https://eslint.org/docs/latest/rules/${ruleId}`),
+    zizmor: (ruleId) => ruleId.startsWith("zizmor/") ? `https://docs.zizmor.sh/audits/#${ruleId.slice("zizmor/".length)}` : undefined,
+};
+// finding.url is engine-supplied (Trivy's PrimaryURL, oxlint's rule docs) and not
+// type-enforced beyond "string" — reject anything that isn't a well-formed
+// http(s) URL rather than rendering it as a link destination.
+function isHttpUrl(value) {
+    try {
+        const parsed = new URL(value);
+        return parsed.protocol === "http:" || parsed.protocol === "https:";
+    }
+    catch {
+        return false;
+    }
+}
+function findingUrl(finding) {
+    if (finding.url && isHttpUrl(finding.url))
+        return finding.url;
+    const specific = ENGINE_RULE_URL[finding.engine]?.(finding.ruleId);
+    if (specific)
+        return specific;
+    const cweMatch = finding.cwe ? /^CWE-(\d+)$/.exec(finding.cwe) : null;
+    return cweMatch ? `https://cwe.mitre.org/data/definitions/${cweMatch[1]}.html` : undefined;
 }
 
 
@@ -90842,6 +90891,7 @@ const gate_1 = __nccwpck_require__(81956);
 const sarif_1 = __nccwpck_require__(20866);
 const sbom_1 = __nccwpck_require__(20594);
 const summary_1 = __nccwpck_require__(28855);
+const report_1 = __nccwpck_require__(70665);
 const engines_1 = __nccwpck_require__(62616);
 const target_1 = __nccwpck_require__(76746);
 const tools_1 = __nccwpck_require__(51732);
@@ -90875,6 +90925,7 @@ function readConfig() {
         failOnEngineError: boolInput("fail-on-engine-error", true),
         wantSarif: boolInput("sarif", true),
         wantSbom: boolInput("sbom", false),
+        wantJsonReport: boolInput("json-report", true),
         uploadArtifacts: boolInput("upload-artifacts", true),
         artifactName: core.getInput("artifact-name") || artifact_2.DEFAULT_ARTIFACT_NAME,
         uploadSarif: boolInput("upload-sarif", false),
@@ -90954,7 +91005,8 @@ async function runEngines(config) {
         const startedAt = Date.now();
         const result = await runEngine(engine, config.target, config.trivyImage, config.opengrepConfig, config.semgrepExcludeRules, config.opengrepExcludeRules);
         normalizeEngineFindings(result, config.target);
-        const elapsedSeconds = ((Date.now() - startedAt) / 1000).toFixed(1);
+        result.durationMs = Date.now() - startedAt;
+        const elapsedSeconds = (result.durationMs / 1000).toFixed(1);
         core.info(`[${engine}] completed in ${elapsedSeconds}s: ${result.findings.length} findings ` +
             `(status=${result.status})`);
         if (result.note)
@@ -90968,12 +91020,12 @@ function sortedFindings(engineResults) {
     findings.sort((a, b) => rank[a.severity] - rank[b.severity] || a.engine.localeCompare(b.engine));
     return findings;
 }
-function writeReports(config, findings, summary) {
+function writeReports(config, findings, engineResults, summary, jsonReport) {
     const artifactFiles = [];
     let sarifPath = "";
     if (config.wantSarif) {
         sarifPath = path.join(config.outputDir, "polyscan.sarif");
-        fs.writeFileSync(sarifPath, (0, sarif_1.toSarif)(findings));
+        fs.writeFileSync(sarifPath, (0, sarif_1.toSarif)(findings, engineResults));
         core.info(`Wrote SARIF: ${sarifPath}`);
         artifactFiles.push(sarifPath);
         core.setOutput("sarif-file", sarifPath);
@@ -90984,6 +91036,13 @@ function writeReports(config, findings, summary) {
         core.info(`Wrote SBOM: ${sbomPath}`);
         artifactFiles.push(sbomPath);
         core.setOutput("sbom-file", sbomPath);
+    }
+    if (config.wantJsonReport) {
+        const jsonPath = path.join(config.outputDir, "polyscan-report.json");
+        fs.writeFileSync(jsonPath, jsonReport);
+        core.info(`Wrote JSON report: ${jsonPath}`);
+        artifactFiles.push(jsonPath);
+        core.setOutput("json-file", jsonPath);
     }
     const summaryPath = path.join(config.outputDir, "polyscan-summary.md");
     fs.writeFileSync(summaryPath, summary);
@@ -91054,13 +91113,25 @@ async function main() {
     (0, tools_1.assertSupportedPlatform)();
     const config = readConfig();
     core.info(`PolyScan scanning "${config.target}" with engines: ${config.engines.join(", ")}`);
+    const startedAt = new Date();
     const engineResults = await runEngines(config);
+    const context = {
+        target: path.relative((0, target_1.workspaceRoot)(), config.target).split(path.sep).join("/") || ".",
+        engines: config.engines,
+        maxConcurrency: config.maxConcurrency,
+        startedAt: startedAt.toISOString(),
+        durationMs: Date.now() - startedAt.getTime(),
+        github: (0, report_1.githubContext)(),
+    };
     const findings = sortedFindings(engineResults);
     const counts = (0, schema_1.countBySeverity)(findings);
     const gate = (0, gate_1.evaluateGate)(findings, config.gate);
-    const summary = (0, summary_1.renderSummary)(findings, counts, gate, config.gateEnforced, engineResults);
+    const summary = (0, summary_1.renderSummary)(findings, counts, gate, config.gateEnforced, engineResults, context);
+    const jsonReport = config.wantJsonReport
+        ? (0, report_1.toJsonReport)({ findings, counts, gate, gateEnforced: config.gateEnforced, engineResults, context })
+        : "";
     await publishSummary(summary);
-    const reports = writeReports(config, findings, summary);
+    const reports = writeReports(config, findings, engineResults, summary, jsonReport);
     if (config.uploadArtifacts && reports.files.length > 0) {
         await uploadReports(reports.files, config.outputDir, config.artifactName);
     }
@@ -91074,6 +91145,67 @@ async function main() {
 main().catch((err) => {
     core.setFailed(`PolyScan crashed: ${err instanceof Error ? err.stack : String(err)}`);
 });
+
+
+/***/ }),
+
+/***/ 70665:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.JSON_REPORT_SCHEMA_VERSION = void 0;
+exports.githubContext = githubContext;
+exports.toJsonReport = toJsonReport;
+// Scan context shared by all reports, and the machine-readable JSON report.
+const schema_1 = __nccwpck_require__(75060);
+const tool_versions_1 = __nccwpck_require__(88947);
+const package_json_1 = __importDefault(__nccwpck_require__(8330));
+exports.JSON_REPORT_SCHEMA_VERSION = 1;
+function githubContext(env = process.env) {
+    const context = {
+        repository: env.GITHUB_REPOSITORY || undefined,
+        ref: env.GITHUB_REF || undefined,
+        sha: env.GITHUB_SHA || undefined,
+        workflow: env.GITHUB_WORKFLOW || undefined,
+        job: env.GITHUB_JOB || undefined,
+        runId: env.GITHUB_RUN_ID || undefined,
+        runAttempt: env.GITHUB_RUN_ATTEMPT || undefined,
+    };
+    if (env.GITHUB_SERVER_URL && context.repository && context.runId) {
+        context.runUrl = `${env.GITHUB_SERVER_URL}/${context.repository}/actions/runs/${context.runId}`;
+    }
+    return context;
+}
+function toJsonReport(input) {
+    const { findings, counts, gate, gateEnforced, engineResults, context } = input;
+    const report = {
+        schemaVersion: exports.JSON_REPORT_SCHEMA_VERSION,
+        tool: { name: "PolyScan", version: package_json_1.default.version },
+        scan: context,
+        gate: {
+            enforced: gateEnforced,
+            passed: gate.passed,
+            thresholds: gate.thresholds,
+            reasons: gate.reasons,
+        },
+        counts,
+        engines: engineResults.map((result) => ({
+            engine: result.engine,
+            status: result.status,
+            version: (0, tool_versions_1.engineVersion)(result.engine),
+            durationMs: result.durationMs,
+            counts: (0, schema_1.countBySeverity)(result.findings),
+            note: result.note,
+        })),
+        findings,
+    };
+    return JSON.stringify(report, null, 2);
+}
 
 
 /***/ }),
@@ -91097,11 +91229,49 @@ function parseExcludedRules(input) {
 
 "use strict";
 
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.toSarif = toSarif;
+// SARIF 2.1.0 serializer (GitHub Code Scanning compatible).
+const crypto = __importStar(__nccwpck_require__(77598));
+const schema_1 = __nccwpck_require__(75060);
+const links_1 = __nccwpck_require__(73346);
+const tool_versions_1 = __nccwpck_require__(88947);
 const package_json_1 = __importDefault(__nccwpck_require__(8330));
 function sarifLevel(sev) {
     switch (sev) {
@@ -91114,27 +91284,103 @@ function sarifLevel(sev) {
             return "note";
     }
 }
-function toSarif(findings) {
+// GitHub Code Scanning buckets rules by `security-severity`:
+// >= 9.0 critical, 7.0–8.9 high, 4.0–6.9 medium, 0.1–3.9 low.
+// Info findings carry no score so they are not shown as security alerts.
+const SECURITY_SEVERITY = {
+    critical: "9.5",
+    high: "8.0",
+    medium: "5.5",
+    low: "2.0",
+};
+function moreSevere(a, b) {
+    return schema_1.SEVERITY_ORDER.indexOf(a) <= schema_1.SEVERITY_ORDER.indexOf(b) ? a : b;
+}
+function collectRules(findings) {
     // Deduplicate rules by engine/ruleId.
     const ruleMap = new Map();
     for (const f of findings) {
         const id = `${f.engine}/${f.ruleId}`;
-        if (!ruleMap.has(id)) {
-            ruleMap.set(id, { id, name: f.ruleId, desc: f.message });
+        let rule = ruleMap.get(id);
+        if (!rule) {
+            rule = { id, name: f.ruleId, desc: f.message, severity: f.severity, cwes: new Set() };
+            ruleMap.set(id, rule);
         }
+        rule.severity = moreSevere(rule.severity, f.severity);
+        rule.helpUri ??= (0, links_1.findingUrl)(f);
+        if (f.cwe)
+            rule.cwes.add(f.cwe);
     }
-    const rules = [...ruleMap.values()].map((r) => ({
-        id: r.id,
-        name: r.name,
-        shortDescription: { text: `${r.name}` },
-        fullDescription: { text: r.desc },
+    return ruleMap;
+}
+function sarifRule(rule) {
+    const securitySeverity = SECURITY_SEVERITY[rule.severity];
+    const cweTags = [...rule.cwes].sort().map((cwe) => `external/cwe/${cwe.toLowerCase()}`);
+    return {
+        id: rule.id,
+        name: rule.name,
+        shortDescription: { text: `${rule.name}` },
+        fullDescription: { text: rule.desc },
+        defaultConfiguration: { level: sarifLevel(rule.severity) },
+        ...(rule.helpUri ? { helpUri: rule.helpUri } : {}),
+        properties: {
+            tags: ["security", rule.id.split("/", 1)[0], ...cweTags],
+            ...(securitySeverity ? { "security-severity": securitySeverity } : {}),
+        },
+    };
+}
+// Line-independent fingerprint, so an alert keeps its identity when code above it
+// moves. Identical findings in one file are told apart by their occurrence index.
+function fingerprints(findings) {
+    const seen = new Map();
+    return findings.map((f) => {
+        const hash = crypto
+            .createHash("sha256")
+            .update([f.engine, f.ruleId, f.source ?? "", f.file, f.message].join("\0"))
+            .digest("hex")
+            .slice(0, 32);
+        const occurrence = (seen.get(hash) ?? 0) + 1;
+        seen.set(hash, occurrence);
+        return `${hash}:${occurrence}`;
+    });
+}
+function engineExtensions(engineResults) {
+    return engineResults.map((result) => {
+        const version = (0, tool_versions_1.engineVersion)(result.engine);
+        return {
+            name: result.engine,
+            ...(version ? { version } : {}),
+            properties: {
+                status: result.status,
+                findings: result.findings.length,
+                ...(result.durationMs === undefined ? {} : { durationMs: result.durationMs }),
+            },
+        };
+    });
+}
+function invocation(engineResults) {
+    const notifications = engineResults
+        .filter((result) => result.note)
+        .map((result) => ({
+        level: result.status === "failed" ? "error" : "note",
+        message: { text: `${result.engine} (${result.status}): ${result.note}` },
+        descriptor: { id: result.engine },
     }));
-    const results = findings.map((f) => {
+    return {
+        executionSuccessful: engineResults.every((result) => result.status !== "failed"),
+        ...(notifications.length > 0 ? { toolExecutionNotifications: notifications } : {}),
+    };
+}
+function toSarif(findings, engineResults) {
+    const rules = [...collectRules(findings).values()].map(sarifRule);
+    const prints = fingerprints(findings);
+    const results = findings.map((f, index) => {
         const imageFinding = f.source?.startsWith("image:");
         return {
             ruleId: `${f.engine}/${f.ruleId}`,
             level: sarifLevel(f.severity),
             message: { text: f.message },
+            partialFingerprints: { "polyscanFindingHash/v1": prints[index] },
             properties: {
                 engine: f.engine,
                 severity: f.severity,
@@ -91167,10 +91413,13 @@ function toSarif(findings) {
                     driver: {
                         name: "PolyScan",
                         version: package_json_1.default.version,
+                        semanticVersion: package_json_1.default.version,
                         informationUri: "https://github.com/sraisl/polyscan-action",
                         rules,
                     },
+                    ...(engineResults ? { extensions: engineExtensions(engineResults) } : {}),
                 },
+                ...(engineResults ? { invocations: [invocation(engineResults)] } : {}),
                 results,
             },
         ],
@@ -91505,12 +91754,21 @@ function countBySeverity(findings) {
 /***/ }),
 
 /***/ 28855:
-/***/ ((__unused_webpack_module, exports) => {
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
 "use strict";
 
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.formatDuration = formatDuration;
 exports.renderSummary = renderSummary;
+// Render a Markdown job summary for GitHub Actions.
+const schema_1 = __nccwpck_require__(75060);
+const links_1 = __nccwpck_require__(73346);
+const tool_versions_1 = __nccwpck_require__(88947);
+const package_json_1 = __importDefault(__nccwpck_require__(8330));
 const SEV_EMOJI = {
     critical: "🟣",
     high: "🔴",
@@ -91534,47 +91792,9 @@ function code(value) {
 function textCell(value) {
     return tableCell(value).replaceAll("[", String.raw `\[`);
 }
-// Keyed by EngineName (not a bare string) so a typo in an engine key fails to
-// compile instead of silently never matching.
-// Only link when a canonical URL can be derived with confidence: a fixed
-// engine-doc naming convention. Engine-supplied URLs (Trivy, oxlint) and the
-// CWE fallback are handled separately in findingUrl().
-const ENGINE_RULE_URL = {
-    hadolint: (ruleId) => {
-        if (/^DL\d+$/.test(ruleId))
-            return `https://github.com/hadolint/hadolint/wiki/${ruleId}`;
-        if (/^SC\d+$/.test(ruleId))
-            return `https://www.shellcheck.net/wiki/${ruleId}`;
-        return undefined;
-    },
-    gosec: (ruleId) => (/^G\d+$/.test(ruleId) ? `https://securego.io/docs/rules/${ruleId.toLowerCase()}.html` : undefined),
-    eslint: (ruleId) => (ruleId.includes("/") ? undefined : `https://eslint.org/docs/latest/rules/${ruleId}`),
-    zizmor: (ruleId) => ruleId.startsWith("zizmor/") ? `https://docs.zizmor.sh/audits/#${ruleId.slice("zizmor/".length)}` : undefined,
-};
-// finding.url is engine-supplied (Trivy's PrimaryURL, oxlint's rule docs) and not
-// type-enforced beyond "string" — reject anything that isn't a well-formed
-// http(s) URL rather than rendering it as a link destination.
-function isHttpUrl(value) {
-    try {
-        const parsed = new URL(value);
-        return parsed.protocol === "http:" || parsed.protocol === "https:";
-    }
-    catch {
-        return false;
-    }
-}
-function findingUrl(finding) {
-    if (finding.url && isHttpUrl(finding.url))
-        return finding.url;
-    const specific = ENGINE_RULE_URL[finding.engine]?.(finding.ruleId);
-    if (specific)
-        return specific;
-    const cweMatch = finding.cwe ? /^CWE-(\d+)$/.exec(finding.cwe) : null;
-    return cweMatch ? `https://cwe.mitre.org/data/definitions/${cweMatch[1]}.html` : undefined;
-}
 function ruleCell(finding) {
     const label = code(finding.ruleId);
-    const url = findingUrl(finding);
+    const url = (0, links_1.findingUrl)(finding);
     // Angle-bracket the destination so a URL containing "(" or ")" (unlikely today,
     // but not guaranteed for future engine-supplied PrimaryURL values) can't
     // truncate the link.
@@ -91600,14 +91820,48 @@ function engineIcon(result) {
         return "ℹ️";
     return "⚠️";
 }
+function formatDuration(ms) {
+    const seconds = ms / 1000;
+    if (seconds < 60)
+        return `${seconds.toFixed(1)}s`;
+    const minutes = Math.floor(seconds / 60);
+    return `${minutes}m ${Math.round(seconds - minutes * 60)}s`;
+}
+// A zero count renders as "·" so the non-zero cells stand out in wide tables.
+function countCell(count) {
+    return count === 0 ? "·" : String(count);
+}
 function engineSection(results) {
-    const lines = ["### Engines"];
+    const lines = [
+        "### Engines",
+        "",
+        `| Engine | Status | Version | Duration | ${schema_1.SEVERITY_ORDER.map((sev) => SEV_EMOJI[sev]).join(" | ")} | Note |`,
+        `|---|---|---|---|${schema_1.SEVERITY_ORDER.map(() => "---:").join("|")}|---|`,
+    ];
     for (const result of results) {
-        const note = result.note ? ` — _${tableCell(result.note)}_` : "";
-        lines.push(`- ${engineIcon(result)} **${tableCell(result.engine)}**: ` +
-            `${result.findings.length} findings (${result.status})${note}`);
+        const counts = (0, schema_1.countBySeverity)(result.findings);
+        const version = (0, tool_versions_1.engineVersion)(result.engine);
+        const duration = result.durationMs === undefined ? "–" : formatDuration(result.durationMs);
+        lines.push(`| **${tableCell(result.engine)}** | ${engineIcon(result)} ${result.status} | ` +
+            `${version ? code(version) : "–"} | ${duration} | ` +
+            `${schema_1.SEVERITY_ORDER.map((sev) => countCell(counts[sev])).join(" | ")} | ` +
+            `${result.note ? textCell(result.note) : ""} |`);
     }
     return [...lines, ""];
+}
+function shortSha(sha) {
+    return /^[0-9a-f]{40}$/i.test(sha) ? sha.slice(0, 7) : sha;
+}
+function contextSection(context) {
+    const parts = [`**Target:** ${code(context.target)}`];
+    const { github } = context;
+    if (github.sha) {
+        const ref = github.ref ? ` on ${code(github.ref)}` : "";
+        parts.push(`**Commit:** ${code(shortSha(github.sha))}${ref}`);
+    }
+    parts.push(`**Engines:** ${context.engines.length}`, `**Duration:** ${formatDuration(context.durationMs)}`);
+    parts.push(`**PolyScan:** ${code(`v${package_json_1.default.version}`)}`);
+    return [parts.join(" · "), ""];
 }
 function findingLocation(finding) {
     const cleanFile = finding.file.startsWith("./") ? finding.file.slice(2) : finding.file;
@@ -91683,7 +91937,9 @@ function findingsSection(findings) {
 function gateSection(gate, enforced) {
     let result;
     if (!enforced) {
-        result = "> ℹ️ Quality Gate not enforced (`gate: false`).";
+        result = gate.passed
+            ? "> ℹ️ Quality Gate not enforced (`gate: false`) — thresholds satisfied."
+            : `> ℹ️ Quality Gate not enforced (\`gate: false\`) — would have failed: ${gate.reasons.join(", ")}.`;
     }
     else if (gate.passed) {
         result = "> ✅ **Passed** — thresholds satisfied.";
@@ -91691,12 +91947,23 @@ function gateSection(gate, enforced) {
     else {
         result = `> ❌ **Failed** — ${gate.reasons.join(", ")}.`;
     }
-    return ["### Quality Gate", result, ""];
+    const rows = [
+        ["critical", gate.thresholds.maxCritical],
+        ["high", gate.thresholds.maxHigh],
+        ["medium", gate.thresholds.maxMedium],
+    ];
+    const lines = ["### Quality Gate", result, "", "| Severity | Found | Max | Result |", "|---|---:|---:|---|"];
+    for (const [severity, max] of rows) {
+        const found = gate.counts[severity];
+        lines.push(`| ${SEV_EMOJI[severity]} ${severity} | ${found} | ${max} | ${found > max ? "❌ exceeded" : "✅ ok"} |`);
+    }
+    return [...lines, "", "_Low and info findings are reported but not gated._", ""];
 }
-function renderSummary(findings, counts, gate, gateEnforced, engineResults) {
+function renderSummary(findings, counts, gate, gateEnforced, engineResults, context) {
     return [
         "## 🔍 PolyScan Report",
         "",
+        ...(context ? contextSection(context) : []),
         ...severitySection(counts),
         ...engineSection(engineResults),
         ...secretsSection(findings),
@@ -91839,6 +92106,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.TOOLS = exports.TOOL_LOCK_SCHEMA_VERSION = void 0;
 exports.githubReleaseUrl = githubReleaseUrl;
 exports.mavenArtifactUrl = mavenArtifactUrl;
+exports.engineVersion = engineVersion;
 const tools_lock_json_1 = __importDefault(__nccwpck_require__(81070));
 exports.TOOL_LOCK_SCHEMA_VERSION = tools_lock_json_1.default.schemaVersion;
 exports.TOOLS = tools_lock_json_1.default.tools;
@@ -91854,6 +92122,14 @@ function mavenArtifactUrl(tool) {
     const groupPath = tool.group.replaceAll(".", "/");
     const filename = `${tool.artifact}-${tool.version}.${tool.extension}`;
     return `https://repo1.maven.org/maven2/${groupPath}/${tool.artifact}/${tool.version}/${filename}`;
+}
+// Pinned scanner version reported for an engine. SpotBugs also loads the
+// FindSecBugs plugin, whose rules produce most of its security findings.
+function engineVersion(engine) {
+    if (engine === "spotbugs") {
+        return `${exports.TOOLS.spotbugs.version} + findsecbugs ${exports.TOOLS.findsecbugs.version}`;
+    }
+    return exports.TOOLS[engine]?.version;
 }
 
 

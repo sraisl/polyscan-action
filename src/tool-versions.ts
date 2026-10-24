@@ -33,3 +33,12 @@ export function mavenArtifactUrl(tool: MavenTool): string {
   const filename = `${tool.artifact}-${tool.version}.${tool.extension}`;
   return `https://repo1.maven.org/maven2/${groupPath}/${tool.artifact}/${tool.version}/${filename}`;
 }
+
+// Pinned scanner version reported for an engine. SpotBugs also loads the
+// FindSecBugs plugin, whose rules produce most of its security findings.
+export function engineVersion(engine: string): string | undefined {
+  if (engine === "spotbugs") {
+    return `${TOOLS.spotbugs.version} + findsecbugs ${TOOLS.findsecbugs.version}`;
+  }
+  return (TOOLS as Record<string, { version: string } | undefined>)[engine]?.version;
+}

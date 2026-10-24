@@ -10,6 +10,7 @@ export interface GateConfig {
 export interface GateResult {
   passed: boolean;
   counts: SeverityCounts;
+  thresholds: GateConfig;
   reasons: string[];
 }
 
@@ -25,5 +26,5 @@ export function evaluateGate(findings: Finding[], cfg: GateConfig): GateResult {
   if (counts.medium > cfg.maxMedium) {
     reasons.push(`${counts.medium} medium (max ${cfg.maxMedium})`);
   }
-  return { passed: reasons.length === 0, counts, reasons };
+  return { passed: reasons.length === 0, counts, thresholds: { ...cfg }, reasons };
 }

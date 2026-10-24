@@ -58,8 +58,12 @@ inputs:
     description: "Write a CycloneDX SBOM (polyscan.sbom.json)"
     required: false
     default: "false"
+  json-report:
+    description: "Write a machine-readable JSON report (polyscan-report.json) with scan context, engine status and all findings"
+    required: false
+    default: "true"
   upload-artifacts:
-    description: "Upload SARIF + SBOM as workflow artifacts"
+    description: "Upload SARIF + SBOM + JSON report + summary as workflow artifacts"
     required: false
     default: "true"
   artifact-name:
@@ -102,6 +106,8 @@ outputs:
     description: "Path to the generated SARIF file (if any)"
   sbom-file:
     description: "Path to the generated SBOM file (if any)"
+  json-file:
+    description: "Path to the generated JSON report (if any)"
 
 runs:
   using: "node24"

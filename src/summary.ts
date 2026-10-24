@@ -1,9 +1,13 @@
 // Render a Markdown job summary for GitHub Actions.
-import { EngineResult, Finding, SeverityCounts } from "./schema";
+import { EngineResult, Finding, SEVERITY_ORDER, Severity, SeverityCounts, countBySeverity } from "./schema";
 import { GateResult } from "./gate";
 import { EngineName } from "./engines";
+import { findingUrl } from "./links";
+import { ScanContext } from "./report";
+import { engineVersion } from "./tool-versions";
+import pkg from "../package.json";
 
-const SEV_EMOJI: Record<string, string> = {
+const SEV_EMOJI: Record<Severity, string> = {
   critical: "🟣",
   high: "🔴",
   medium: "🟠",
@@ -28,45 +32,6 @@ function code(value: string): string {
 // wrapped in a code span (code spans are never parsed as markdown by CommonMark).
 function textCell(value: string): string {
   return tableCell(value).replaceAll("[", String.raw`\[`);
-}
-
-// Keyed by EngineName (not a bare string) so a typo in an engine key fails to
-// compile instead of silently never matching.
-// Only link when a canonical URL can be derived with confidence: a fixed
-// engine-doc naming convention. Engine-supplied URLs (Trivy, oxlint) and the
-// CWE fallback are handled separately in findingUrl().
-const ENGINE_RULE_URL: Partial<Record<EngineName, (ruleId: string) => string | undefined>> = {
-  hadolint: (ruleId) => {
-    if (/^DL\d+$/.test(ruleId)) return `https://github.com/hadolint/hadolint/wiki/${ruleId}`;
-    if (/^SC\d+$/.test(ruleId)) return `https://www.shellcheck.net/wiki/${ruleId}`;
-    return undefined;
-  },
-  gosec: (ruleId) => (/^G\d+$/.test(ruleId) ? `https://securego.io/docs/rules/${ruleId.toLowerCase()}.html` : undefined),
-  eslint: (ruleId) => (ruleId.includes("/") ? undefined : `https://eslint.org/docs/latest/rules/${ruleId}`),
-  zizmor: (ruleId) =>
-    ruleId.startsWith("zizmor/") ? `https://docs.zizmor.sh/audits/#${ruleId.slice("zizmor/".length)}` : undefined,
-};
-
-// finding.url is engine-supplied (Trivy's PrimaryURL, oxlint's rule docs) and not
-// type-enforced beyond "string" — reject anything that isn't a well-formed
-// http(s) URL rather than rendering it as a link destination.
-function isHttpUrl(value: string): boolean {
-  try {
-    const parsed = new URL(value);
-    return parsed.protocol === "http:" || parsed.protocol === "https:";
-  } catch {
-    return false;
-  }
-}
-
-function findingUrl(finding: Finding): string | undefined {
-  if (finding.url && isHttpUrl(finding.url)) return finding.url;
-
-  const specific = ENGINE_RULE_URL[finding.engine as EngineName]?.(finding.ruleId);
-  if (specific) return specific;
-
-  const cweMatch = finding.cwe ? /^CWE-(\d+)$/.exec(finding.cwe) : null;
-  return cweMatch ? `https://cwe.mitre.org/data/definitions/${cweMatch[1]}.html` : undefined;
 }
 
 function ruleCell(finding: Finding): string {
@@ -98,16 +63,53 @@ function engineIcon(result: EngineResult): string {
   return "⚠️";
 }
 
+export function formatDuration(ms: number): string {
+  const seconds = ms / 1000;
+  if (seconds < 60) return `${seconds.toFixed(1)}s`;
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes}m ${Math.round(seconds - minutes * 60)}s`;
+}
+
+// A zero count renders as "·" so the non-zero cells stand out in wide tables.
+function countCell(count: number): string {
+  return count === 0 ? "·" : String(count);
+}
+
 function engineSection(results: EngineResult[]): string[] {
-  const lines = ["### Engines"];
+  const lines = [
+    "### Engines",
+    "",
+    `| Engine | Status | Version | Duration | ${SEVERITY_ORDER.map((sev) => SEV_EMOJI[sev]).join(" | ")} | Note |`,
+    `|---|---|---|---|${SEVERITY_ORDER.map(() => "---:").join("|")}|---|`,
+  ];
   for (const result of results) {
-    const note = result.note ? ` — _${tableCell(result.note)}_` : "";
+    const counts = countBySeverity(result.findings);
+    const version = engineVersion(result.engine);
+    const duration = result.durationMs === undefined ? "–" : formatDuration(result.durationMs);
     lines.push(
-      `- ${engineIcon(result)} **${tableCell(result.engine)}**: ` +
-        `${result.findings.length} findings (${result.status})${note}`,
+      `| **${tableCell(result.engine)}** | ${engineIcon(result)} ${result.status} | ` +
+        `${version ? code(version) : "–"} | ${duration} | ` +
+        `${SEVERITY_ORDER.map((sev) => countCell(counts[sev])).join(" | ")} | ` +
+        `${result.note ? textCell(result.note) : ""} |`,
     );
   }
   return [...lines, ""];
+}
+
+function shortSha(sha: string): string {
+  return /^[0-9a-f]{40}$/i.test(sha) ? sha.slice(0, 7) : sha;
+}
+
+function contextSection(context: ScanContext): string[] {
+  const parts = [`**Target:** ${code(context.target)}`];
+  const { github } = context;
+  if (github.sha) {
+    const ref = github.ref ? ` on ${code(github.ref)}` : "";
+    parts.push(`**Commit:** ${code(shortSha(github.sha))}${ref}`);
+  }
+  parts.push(`**Engines:** ${context.engines.length}`, `**Duration:** ${formatDuration(context.durationMs)}`);
+  parts.push(`**PolyScan:** ${code(`v${pkg.version}`)}`);
+  return [parts.join(" · "), ""];
 }
 
 function findingLocation(finding: Finding): string {
@@ -195,13 +197,28 @@ function findingsSection(findings: Finding[]): string[] {
 function gateSection(gate: GateResult, enforced: boolean): string[] {
   let result: string;
   if (!enforced) {
-    result = "> ℹ️ Quality Gate not enforced (`gate: false`).";
+    result = gate.passed
+      ? "> ℹ️ Quality Gate not enforced (`gate: false`) — thresholds satisfied."
+      : `> ℹ️ Quality Gate not enforced (\`gate: false\`) — would have failed: ${gate.reasons.join(", ")}.`;
   } else if (gate.passed) {
     result = "> ✅ **Passed** — thresholds satisfied.";
   } else {
     result = `> ❌ **Failed** — ${gate.reasons.join(", ")}.`;
   }
-  return ["### Quality Gate", result, ""];
+
+  const rows: [Severity, number][] = [
+    ["critical", gate.thresholds.maxCritical],
+    ["high", gate.thresholds.maxHigh],
+    ["medium", gate.thresholds.maxMedium],
+  ];
+  const lines = ["### Quality Gate", result, "", "| Severity | Found | Max | Result |", "|---|---:|---:|---|"];
+  for (const [severity, max] of rows) {
+    const found = gate.counts[severity];
+    lines.push(
+      `| ${SEV_EMOJI[severity]} ${severity} | ${found} | ${max} | ${found > max ? "❌ exceeded" : "✅ ok"} |`,
+    );
+  }
+  return [...lines, "", "_Low and info findings are reported but not gated._", ""];
 }
 
 export function renderSummary(
@@ -210,10 +227,12 @@ export function renderSummary(
   gate: GateResult,
   gateEnforced: boolean,
   engineResults: EngineResult[],
+  context?: ScanContext,
 ): string {
   return [
     "## 🔍 PolyScan Report",
     "",
+    ...(context ? contextSection(context) : []),
     ...severitySection(counts),
     ...engineSection(engineResults),
     ...secretsSection(findings),
