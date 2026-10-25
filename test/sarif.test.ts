@@ -2,7 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { toSarif } from "../src/sarif";
-import { Finding } from "../src/schema";
+import { EngineResult, Finding } from "../src/schema";
+import { TOOLS } from "../src/tool-versions";
 
 test("toSarif serializes normalized findings into SARIF results", () => {
   const findings: Finding[] = [
@@ -47,4 +48,123 @@ test("toSarif omits file locations for container image findings", () => {
   const result = JSON.parse(toSarif(findings)).runs[0].results[0];
   assert.equal(result.locations, undefined);
   assert.equal(result.properties.source, "image:example/app:latest");
+});
+
+test("toSarif adds code scanning rule metadata for rules with a single severity", () => {
+  const findings: Finding[] = [
+    { engine: "trufflehog", ruleId: "AWS", severity: "critical", message: "verified", file: "a.env", line: 1 },
+    { engine: "trufflehog", ruleId: "AWS", severity: "critical", message: "verified", file: "b.env", line: 2 },
+    {
+      engine: "gosec",
+      ruleId: "G201",
+      severity: "medium",
+      message: "SQL string formatting",
+      file: "db.go",
+      line: 9,
+      cwe: "CWE-89",
+    },
+    { engine: "semgrep", ruleId: "info-rule", severity: "info", message: "fyi", file: "x.py", line: 1 },
+  ];
+
+  const rules = JSON.parse(toSarif(findings)).runs[0].tool.driver.rules;
+  const byId = new Map(rules.map((rule: { id: string }) => [rule.id, rule]));
+
+  const aws = byId.get("trufflehog/AWS") as Record<string, any>;
+  assert.equal(aws.properties["security-severity"], "9.5");
+  assert.equal(aws.defaultConfiguration.level, "error");
+  assert.deepEqual(aws.properties.tags, ["security", "trufflehog"]);
+
+  const gosec = byId.get("gosec/G201") as Record<string, any>;
+  assert.equal(gosec.properties["security-severity"], "5.5");
+  assert.equal(gosec.helpUri, "https://securego.io/docs/rules/g201.html");
+  assert.deepEqual(gosec.properties.tags, ["security", "gosec", "external/cwe/cwe-89"]);
+
+  const info = byId.get("semgrep/info-rule") as Record<string, any>;
+  assert.equal(info.properties["security-severity"], undefined);
+  assert.equal(info.helpUri, undefined);
+});
+
+test("toSarif leaves rule severity and help link to each result when a rule's findings disagree", () => {
+  const findings: Finding[] = [
+    {
+      engine: "trivy",
+      ruleId: "TRIVY-VULN",
+      severity: "critical",
+      message: "pkg a",
+      file: "package-lock.json",
+      line: 1,
+      url: "https://example.test/a",
+    },
+    {
+      engine: "trivy",
+      ruleId: "TRIVY-VULN",
+      severity: "low",
+      message: "pkg b",
+      file: "package-lock.json",
+      line: 1,
+      url: "https://example.test/b",
+    },
+  ];
+
+  const run = JSON.parse(toSarif(findings)).runs[0];
+  const [rule] = run.tool.driver.rules;
+  assert.equal(rule.properties["security-severity"], undefined);
+  assert.equal(rule.defaultConfiguration, undefined);
+  assert.equal(rule.helpUri, undefined);
+  assert.deepEqual(run.results.map((result: { level: string }) => result.level), ["error", "note"]);
+});
+
+test("toSarif records engine versions and engine failures when engine results are given", () => {
+  const engines: EngineResult[] = [
+    { engine: "bandit", findings: [], status: "success", durationMs: 1200 },
+    { engine: "detekt", findings: [], status: "skipped", note: "no Kotlin files" },
+    { engine: "semgrep", findings: [], status: "failed", note: "semgrep not installed" },
+  ];
+  const run = JSON.parse(toSarif([], engines)).runs[0];
+
+  assert.deepEqual(run.tool.extensions[0], {
+    name: "bandit",
+    version: TOOLS.bandit.version,
+    properties: { status: "success", findings: 0, durationMs: 1200 },
+  });
+  assert.equal(run.invocations[0].executionSuccessful, true);
+  assert.deepEqual(
+    run.invocations[0].toolExecutionNotifications.map((n: { level: string; descriptor: { id: string } }) => [
+      n.descriptor.id,
+      n.level,
+    ]),
+    [
+      ["detekt", "note"],
+      ["semgrep", "error"],
+    ],
+  );
+});
+
+test("toSarif reports pinned versions only for engines that ran successfully", () => {
+  const engines: EngineResult[] = [
+    { engine: "detekt", findings: [], status: "skipped", note: "no Kotlin files" },
+    { engine: "semgrep", findings: [], status: "failed", note: "semgrep not installed" },
+  ];
+  const extensions = JSON.parse(toSarif([], engines)).runs[0].tool.extensions;
+  assert.deepEqual(extensions.map((extension: { version?: string }) => extension.version), [undefined, undefined]);
+});
+
+test("toSarif marks the run unsuccessful only when engines failed and none succeeded", () => {
+  const successful = (engines: EngineResult[]) =>
+    JSON.parse(toSarif([], engines)).runs[0].invocations[0].executionSuccessful;
+  const ok: EngineResult = { engine: "bandit", findings: [], status: "success" };
+  const skipped: EngineResult = { engine: "detekt", findings: [], status: "skipped" };
+  const failed: EngineResult = { engine: "semgrep", findings: [], status: "failed", note: "crashed" };
+
+  assert.equal(successful([ok, failed]), true);
+  assert.equal(successful([ok, skipped]), true);
+  assert.equal(successful([skipped]), true);
+  assert.equal(successful([failed]), false);
+  assert.equal(successful([failed, skipped]), false);
+});
+
+test("toSarif without engine results omits extensions and invocations", () => {
+  const run = JSON.parse(toSarif([])).runs[0];
+  assert.equal(run.tool.extensions, undefined);
+  assert.equal(run.invocations, undefined);
 });

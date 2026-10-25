@@ -13,6 +13,29 @@ tags and must not be reused or moved.
 
 ## [Unreleased]
 
+### Added
+
+- New JSON report `polyscan-report.json` (input `json-report`, default `true`; output `json-file`) with the scan
+  context, Quality Gate thresholds and result, per-engine status, pinned tool version (`pinnedVersion`, only for engines that ran successfully), duration and
+  severity counts, and all
+  findings. It is included in the uploaded artifact.
+- The job summary shows the scanned target, commit, total duration and PolyScan version. The engine list is now a
+  table with each engine's pinned tool version, duration and findings per severity. The Quality Gate section lists
+  found vs. allowed counts per gated severity.
+- SARIF rules carry `security`/CWE tags and, when all of a rule's findings agree, `security-severity`, a default
+  level and `helpUri`, so GitHub Code Scanning shows severities and links to rule documentation. Pinned engine
+  versions are listed under `tool.extensions` and engine failures or skip reasons under `invocations`; the run counts
+  as unsuccessful only when engines failed and none succeeded.
+
+### Security
+
+- Report files (`polyscan.sarif`, `polyscan.sbom.json`, `polyscan-report.json`, `polyscan-summary.md`) are no
+  longer written through a symlink. A repository could check in a symlink with a report's name that points outside
+  the workspace, and the write followed it and overwrote the target. PolyScan now fails with
+  `refusing to write report through symlink` instead.
+- Bundled `undici` raised to 6.29.1 (GHSA-4qv8-2p9j-2685, GHSA-xjj6-f33q-929c: denial of service via the
+  EventSource parser and excessive content-encodings).
+
 ## [v17.1.0] - 2026-10-23
 
 ### Added

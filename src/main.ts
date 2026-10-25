@@ -1,6 +1,5 @@
 // PolyScan GitHub Action — entry point.
 import * as core from "@actions/core";
-import * as fs from "node:fs";
 import * as path from "node:path";
 import { DefaultArtifactClient } from "@actions/artifact";
 
@@ -23,8 +22,9 @@ import { evaluateGate } from "./gate";
 import { toSarif } from "./sarif";
 import { toSbom } from "./sbom";
 import { renderSummary } from "./summary";
+import { ScanContext, githubContext, toJsonReport } from "./report";
 import { resolveEngines, unknownEngines, SUPPORTED_ENGINES } from "./engines";
-import { normalizeFindingPath, resolveOutputDir, resolveTarget } from "./target";
+import { normalizeFindingPath, resolveOutputDir, resolveTarget, workspaceRoot, writeReportFile } from "./target";
 import { assertSupportedPlatform } from "./tools";
 import { mapConcurrentWithBarriers, parseMaxConcurrency } from "./scheduler";
 import { parseExcludedRules } from "./rule-exclusions";
@@ -52,6 +52,7 @@ interface ActionConfig {
   failOnEngineError: boolean;
   wantSarif: boolean;
   wantSbom: boolean;
+  wantJsonReport: boolean;
   uploadArtifacts: boolean;
   artifactName: string;
   uploadSarif: boolean;
@@ -84,6 +85,7 @@ function readConfig(): ActionConfig {
     failOnEngineError: boolInput("fail-on-engine-error", true),
     wantSarif: boolInput("sarif", true),
     wantSbom: boolInput("sbom", false),
+    wantJsonReport: boolInput("json-report", true),
     uploadArtifacts: boolInput("upload-artifacts", true),
     artifactName: core.getInput("artifact-name") || DEFAULT_ARTIFACT_NAME,
     uploadSarif: boolInput("upload-sarif", false),
@@ -190,7 +192,8 @@ async function runEngines(config: ActionConfig): Promise<EngineResult[]> {
         config.opengrepExcludeRules,
       );
       normalizeEngineFindings(result, config.target);
-      const elapsedSeconds = ((Date.now() - startedAt) / 1000).toFixed(1);
+      result.durationMs = Date.now() - startedAt;
+      const elapsedSeconds = (result.durationMs / 1000).toFixed(1);
       core.info(
         `[${engine}] completed in ${elapsedSeconds}s: ${result.findings.length} findings ` +
           `(status=${result.status})`,
@@ -211,13 +214,15 @@ function sortedFindings(engineResults: EngineResult[]): Finding[] {
 function writeReports(
   config: ActionConfig,
   findings: Finding[],
+  engineResults: EngineResult[],
   summary: string,
+  jsonReport: string,
 ): { files: string[]; sarifPath: string } {
   const artifactFiles: string[] = [];
   let sarifPath = "";
   if (config.wantSarif) {
     sarifPath = path.join(config.outputDir, "polyscan.sarif");
-    fs.writeFileSync(sarifPath, toSarif(findings));
+    writeReportFile(sarifPath, toSarif(findings, engineResults));
     core.info(`Wrote SARIF: ${sarifPath}`);
     artifactFiles.push(sarifPath);
     core.setOutput("sarif-file", sarifPath);
@@ -225,14 +230,22 @@ function writeReports(
 
   if (config.wantSbom) {
     const sbomPath = path.join(config.outputDir, "polyscan.sbom.json");
-    fs.writeFileSync(sbomPath, toSbom(config.target));
+    writeReportFile(sbomPath, toSbom(config.target));
     core.info(`Wrote SBOM: ${sbomPath}`);
     artifactFiles.push(sbomPath);
     core.setOutput("sbom-file", sbomPath);
   }
 
+  if (config.wantJsonReport) {
+    const jsonPath = path.join(config.outputDir, "polyscan-report.json");
+    writeReportFile(jsonPath, jsonReport);
+    core.info(`Wrote JSON report: ${jsonPath}`);
+    artifactFiles.push(jsonPath);
+    core.setOutput("json-file", jsonPath);
+  }
+
   const summaryPath = path.join(config.outputDir, "polyscan-summary.md");
-  fs.writeFileSync(summaryPath, summary);
+  writeReportFile(summaryPath, summary);
   artifactFiles.push(summaryPath);
   return { files: artifactFiles, sarifPath };
 }
@@ -315,14 +328,26 @@ async function main(): Promise<void> {
   const config = readConfig();
   core.info(`PolyScan scanning "${config.target}" with engines: ${config.engines.join(", ")}`);
 
+  const startedAt = new Date();
   const engineResults = await runEngines(config);
+  const context: ScanContext = {
+    target: path.relative(workspaceRoot(), config.target).split(path.sep).join("/") || ".",
+    engines: config.engines,
+    maxConcurrency: config.maxConcurrency,
+    startedAt: startedAt.toISOString(),
+    durationMs: Date.now() - startedAt.getTime(),
+    github: githubContext(),
+  };
   const findings = sortedFindings(engineResults);
   const counts = countBySeverity(findings);
   const gate = evaluateGate(findings, config.gate);
-  const summary = renderSummary(findings, counts, gate, config.gateEnforced, engineResults);
+  const summary = renderSummary(findings, counts, gate, config.gateEnforced, engineResults, context);
+  const jsonReport = config.wantJsonReport
+    ? toJsonReport({ findings, counts, gate, gateEnforced: config.gateEnforced, engineResults, context })
+    : "";
 
   await publishSummary(summary);
-  const reports = writeReports(config, findings, summary);
+  const reports = writeReports(config, findings, engineResults, summary, jsonReport);
   if (config.uploadArtifacts && reports.files.length > 0) {
     await uploadReports(reports.files, config.outputDir, config.artifactName);
   }

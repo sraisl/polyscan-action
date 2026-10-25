@@ -28,6 +28,7 @@ export interface EngineResult {
   findings: Finding[];
   status: "success" | "skipped" | "failed";
   note?: string;
+  durationMs?: number; // wall-clock time of the engine run, set by the scheduler
 }
 
 export interface SeverityCounts {

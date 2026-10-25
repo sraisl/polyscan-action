@@ -62734,7 +62734,7 @@ function defaultFactory (origin, opts) {
 }
 
 class Agent extends DispatcherBase {
-  constructor ({ factory = defaultFactory, maxRedirections = 0, connect, ...options } = {}) {
+  constructor ({ factory = defaultFactory, maxRedirections = 0, connect, tls, ...options } = {}) {
     if (typeof factory !== 'function') {
       throw new InvalidArgumentError('factory must be a function.')
     }
@@ -62753,11 +62753,15 @@ class Agent extends DispatcherBase {
       connect = { ...connect }
     }
 
+    if (tls && typeof tls !== 'function') {
+      tls = { ...tls }
+    }
+
     this[kInterceptors] = options.interceptors?.Agent && Array.isArray(options.interceptors.Agent)
       ? options.interceptors.Agent
       : [createRedirectInterceptor({ maxRedirections })]
 
-    this[kOptions] = { ...util.deepClone(options), connect }
+    this[kOptions] = { ...util.deepClone(options), connect, tls }
     this[kOptions].interceptors = options.interceptors
       ? { ...options.interceptors }
       : undefined
@@ -63792,8 +63796,6 @@ async function connectH1 (client, socket) {
   socket[kParser] = new Parser(client, socket, llhttpInstance)
 
   addListener(socket, 'error', function (err) {
-    assert(err.code !== 'ERR_TLS_CERT_ALTNAME_INVALID')
-
     const parser = this[kParser]
 
     // On Mac OS, we get an ECONNRESET even if there is a full body to be forwarded
@@ -64724,8 +64726,6 @@ async function connectH2 (client, socket) {
   socket[kHTTP2Session] = session
 
   util.addListener(socket, 'error', function (err) {
-    assert(err.code !== 'ERR_TLS_CERT_ALTNAME_INVALID')
-
     this[kError] = err
 
     this[kClient][kOnError](err)
@@ -64799,8 +64799,6 @@ function resumeH2 (client) {
 }
 
 function onHttp2SessionError (err) {
-  assert(err.code !== 'ERR_TLS_CERT_ALTNAME_INVALID')
-
   this[kSocket][kError] = err
   this[kClient][kOnError](err)
 }
@@ -65499,9 +65497,10 @@ class Client extends DispatcherBase {
     // h2
     maxConcurrentStreams,
     allowH2,
-    webSocket
+    webSocket,
+    eventSource
   } = {}) {
-    super({ webSocket })
+    super({ webSocket, eventSource })
 
     if (keepAlive !== undefined) {
       throw new InvalidArgumentError('unsupported keepAlive, use pipelining=0 instead')
@@ -66023,6 +66022,7 @@ module.exports = Client
 "use strict";
 
 
+const buffer = __nccwpck_require__(4573)
 const Dispatcher = __nccwpck_require__(30883)
 const {
   ClientDestroyedError,
@@ -66035,6 +66035,7 @@ const kOnDestroyed = Symbol('onDestroyed')
 const kOnClosed = Symbol('onClosed')
 const kInterceptedDispatch = Symbol('Intercepted Dispatch')
 const kWebSocketOptions = Symbol('webSocketOptions')
+const kEventSourceOptions = Symbol('eventSourceOptions')
 
 class DispatcherBase extends Dispatcher {
   constructor (opts) {
@@ -66045,12 +66046,19 @@ class DispatcherBase extends Dispatcher {
     this[kClosed] = false
     this[kOnClosed] = []
     this[kWebSocketOptions] = opts?.webSocket ?? {}
+    this[kEventSourceOptions] = opts?.eventSource ?? {}
   }
 
   get webSocketOptions () {
     return {
       maxFragments: this[kWebSocketOptions].maxFragments ?? 131072,
       maxPayloadSize: this[kWebSocketOptions].maxPayloadSize ?? 128 * 1024 * 1024
+    }
+  }
+
+  get eventSourceOptions () {
+    return {
+      maxEventSize: this[kEventSourceOptions].maxEventSize ?? buffer.kStringMaxLength
     }
   }
 
@@ -72451,6 +72459,7 @@ module.exports = {
 
 "use strict";
 
+const buffer = __nccwpck_require__(4573)
 const { Transform } = __nccwpck_require__(57075)
 const { isASCIINumber, isValidLastEventId } = __nccwpck_require__(94811)
 
@@ -72475,10 +72484,18 @@ const COLON = 0x3A
  */
 const SPACE = 0x20
 
+const defaultMaxEventSize = buffer.kStringMaxLength
+
 const DATA = Buffer.from('data')
 const EVENT = Buffer.from('event')
 const ID = Buffer.from('id')
 const RETRY = Buffer.from('retry')
+
+// Each data field creates a string node, and each unconsumed input chunk keeps
+// a Buffer wrapper. The absolute ceiling protects the large default byte limit.
+const minParserItems = 1024
+const maxParserItems = 131072
+const bytesPerParserItem = 128
 
 function isASCIINumberBytes (buffer, start) {
   if (start >= buffer.length) {
@@ -72516,6 +72533,12 @@ function isFieldName (line, length, field) {
   }
 
   return true
+}
+
+function createMaxEventSizeExceededError () {
+  const error = new Error('EventSource message size exceeded')
+  error.aborted = false
+  return error
 }
 
 /**
@@ -72566,6 +72589,13 @@ class EventSourceStream extends Transform {
   pos = 0
   lineChunkIndex = 0
   linePos = 0
+  lineLength = 0
+  eventSize = 0
+  eventFieldSizes = { data: 0, event: 0, id: 0, retry: 0 }
+  dataLineCount = 0
+  maxEventSize
+  maxDataLines
+  maxBufferedChunks
 
   event = {
     data: undefined,
@@ -72576,6 +72606,7 @@ class EventSourceStream extends Transform {
 
   /**
    * @param {object} options
+   * @param {number} [options.maxEventSize]
    * @param {eventSourceSettings} options.eventSourceSettings
    * @param {Function} [options.push]
    */
@@ -72587,6 +72618,12 @@ class EventSourceStream extends Transform {
     super(options)
 
     this.state = options.eventSourceSettings || {}
+    this.maxEventSize = options.maxEventSize ?? defaultMaxEventSize
+    const parserItemLimit = this.maxEventSize > 0
+      ? Math.min(maxParserItems, Math.max(minParserItems, Math.floor(this.maxEventSize / bytesPerParserItem)))
+      : 0
+    this.maxDataLines = parserItemLimit
+    this.maxBufferedChunks = parserItemLimit
     if (options.push) {
       this.push = options.push
     }
@@ -72604,6 +72641,14 @@ class EventSourceStream extends Transform {
       return
     }
 
+    // A leading line ending can immediately release the currently buffered
+    // line, even when it uses the final allowed chunk slot.
+    if (this.maxEventSize > 0 &&
+        this.chunks.length >= this.maxBufferedChunks &&
+        chunk[0] !== LF && chunk[0] !== CR) {
+      callback(createMaxEventSizeExceededError())
+      return
+    }
     this.chunks.push(chunk)
 
     // Strip leading byte-order-mark if we opened the stream and started
@@ -72682,7 +72727,12 @@ class EventSourceStream extends Transform {
 
         // In any case, we can process the line as we reached an
         // end-of-line character
-        this.parseLine(this.readLine(), this.event)
+        try {
+          this.parseLine(this.readLine(), this.event)
+        } catch (error) {
+          callback(error)
+          return
+        }
         this.consumeCurrentByte()
         // A line was processed and this could be the end of the event. We need
         // to check if the next line is empty to determine if the event is
@@ -72691,15 +72741,28 @@ class EventSourceStream extends Transform {
         continue
       }
 
+      // readLine() is only called after CR or LF. Reject an unfinished line
+      // before it can retain an unbounded number of decoded chunks. The seven
+      // extra bytes allow the longest field prefix ("event: " or "retry: ").
+      if (this.maxEventSize > 0 && ++this.lineLength > this.maxEventSize + 7) {
+        callback(createMaxEventSizeExceededError())
+        return
+      }
       this.advanceCursor()
     }
 
     callback()
   }
 
+  _destroy (error, callback) {
+    this.chunks.length = 0
+    this.clearEvent()
+    super._destroy(error, callback)
+  }
+
   /**
    * @param {Buffer} line
-   * @param {EventStreamEvent} event
+   * @param {EventSourceStreamEvent} event
    */
   parseLine (line, event) {
     // If the line is empty (a blank line)
@@ -72733,6 +72796,13 @@ class EventSourceStream extends Transform {
     }
 
     if (isFieldName(line, fieldLength, DATA)) {
+      if (this.maxEventSize > 0 && this.dataLineCount >= this.maxDataLines) {
+        throw createMaxEventSizeExceededError()
+      }
+      const valueBytes = line.length - valueStart
+      const dataSize = this.eventFieldSizes.data + (event.data === undefined ? 0 : 1) + valueBytes
+      this.setEventFieldSize('data', dataSize)
+
       const value = line.toString('utf8', valueStart)
 
       if (event.data === undefined) {
@@ -72740,11 +72810,13 @@ class EventSourceStream extends Transform {
       } else {
         event.data += `\n${value}`
       }
+      this.dataLineCount++
       return
     }
 
     if (isFieldName(line, fieldLength, RETRY)) {
       if (isASCIINumberBytes(line, valueStart)) {
+        this.setEventFieldSize('retry', line.length - valueStart)
         event.retry = line.toString('utf8', valueStart)
       }
       return
@@ -72752,18 +72824,27 @@ class EventSourceStream extends Transform {
 
     if (isFieldName(line, fieldLength, ID)) {
       if (isValidLastEventIdBytes(line, valueStart)) {
+        this.setEventFieldSize('id', line.length - valueStart)
         event.id = line.toString('utf8', valueStart)
       }
       return
     }
 
     if (isFieldName(line, fieldLength, EVENT)) {
-      const value = line.toString('utf8', valueStart)
-
-      if (value.length > 0) {
-        event.event = value
+      if (valueStart < line.length) {
+        this.setEventFieldSize('event', line.length - valueStart)
+        event.event = line.toString('utf8', valueStart)
       }
     }
+  }
+
+  setEventFieldSize (field, size) {
+    const eventSize = this.eventSize - this.eventFieldSizes[field] + size
+    if (this.maxEventSize > 0 && eventSize > this.maxEventSize) {
+      throw createMaxEventSizeExceededError()
+    }
+    this.eventSize = eventSize
+    this.eventFieldSizes[field] = size
   }
 
   /**
@@ -72796,6 +72877,12 @@ class EventSourceStream extends Transform {
     this.event.event = undefined
     this.event.id = undefined
     this.event.retry = undefined
+    this.eventSize = 0
+    this.dataLineCount = 0
+    this.eventFieldSizes.data = 0
+    this.eventFieldSizes.event = 0
+    this.eventFieldSizes.id = 0
+    this.eventFieldSizes.retry = 0
   }
 
   hasPendingEvent () {
@@ -72831,14 +72918,16 @@ class EventSourceStream extends Transform {
   syncLineStartToCursor () {
     this.lineChunkIndex = this.chunkIndex
     this.linePos = this.pos
+    this.lineLength = 0
     this.dropConsumedChunks()
   }
 
   dropConsumedChunks () {
-    while (this.lineChunkIndex > 0) {
-      this.chunks.shift()
-      this.lineChunkIndex--
-      this.chunkIndex--
+    if (this.lineChunkIndex > 0) {
+      const consumed = this.lineChunkIndex
+      this.chunks.splice(0, consumed)
+      this.lineChunkIndex = 0
+      this.chunkIndex -= consumed
     }
 
     if (this.chunkIndex === this.chunks.length) {
@@ -72964,6 +73053,7 @@ const { isNetworkError } = __nccwpck_require__(99051)
 const { delay } = __nccwpck_require__(94811)
 const { kEnumerableProperty } = __nccwpck_require__(3440)
 const { environmentSettingsObject } = __nccwpck_require__(73168)
+const { getGlobalDispatcher } = __nccwpck_require__(32581)
 
 let experimentalWarned = false
 
@@ -73245,6 +73335,7 @@ class EventSource extends EventTarget {
 
       const eventSourceStream = new EventSourceStream({
         eventSourceSettings: this.#state,
+        maxEventSize: this.#dispatcher.eventSourceOptions?.maxEventSize,
         push: (event) => {
           this.dispatchEvent(createFastMessageEvent(
             event.type,
@@ -73423,7 +73514,8 @@ webidl.converters.EventSourceInitDict = webidl.dictionaryConverter([
   },
   {
     key: 'dispatcher', // undici only
-    converter: webidl.converters.any
+    converter: webidl.converters.any,
+    defaultValue: () => getGlobalDispatcher()
   }
 ])
 
@@ -78530,8 +78622,10 @@ async function httpNetworkFetch (
   // 19. Run these steps in parallel:
 
   //    1. Run these steps, but abort when fetchParams is canceled:
-  fetchParams.controller.onAborted = onAborted
-  fetchParams.controller.on('terminated', onAborted)
+  if (!fetchParams.controller.resume) {
+    fetchParams.controller.on('terminated', onAborted)
+  }
+
   fetchParams.controller.resume = async () => {
     // 1. While true
     while (true) {
@@ -78700,8 +78794,6 @@ async function httpNetworkFetch (
           }
           location = headersList.get('location', true)
 
-          this.body = new Readable({ read: resume })
-
           const decoders = []
 
           const willFollow = location && request.redirect === 'follow' &&
@@ -78719,7 +78811,7 @@ async function httpNetworkFetch (
             // CVE fix similar to urllib3 (GHSA-gm62-xv2j-4w53) and curl (CVE-2022-32206).
             const maxContentEncodings = 5
             if (codings.length > maxContentEncodings) {
-              reject(new Error(`too many content-encodings in response: ${codings.length}, maximum allowed is ${maxContentEncodings}`))
+              this.abort(new Error(`too many content-encodings in response: ${codings.length}, maximum allowed is ${maxContentEncodings}`))
               return true
             }
 
@@ -78751,6 +78843,8 @@ async function httpNetworkFetch (
               }
             }
           }
+
+          this.body = new Readable({ read: resume })
 
           const onError = this.onError.bind(this)
 
@@ -78796,10 +78890,6 @@ async function httpNetworkFetch (
         onComplete () {
           if (this.abort) {
             fetchParams.controller.off('terminated', this.abort)
-          }
-
-          if (fetchParams.controller.onAborted) {
-            fetchParams.controller.off('terminated', fetchParams.controller.onAborted)
           }
 
           fetchParams.controller.ended = true
@@ -85292,6 +85382,20 @@ class ByteParser extends Writable {
         if (isControlFrame(this.#info.opcode)) {
           this.#loop = this.parseControlFrame(body)
           this.#state = parserStates.INFO
+
+          // If the automatic PONG/CLOSE reply filled the socket's write buffer,
+          // stop parsing and resume on drain so a PING flood cannot grow the
+          // outbound queue without bound.
+          const socket = this.ws[kResponse].socket
+          if (this.#loop && socket.writableNeedDrain) {
+            this.#loop = false
+            socket.once('drain', () => {
+              if (this.destroyed) return
+              this.#loop = true
+              this.run(callback)
+            })
+            return
+          }
         } else {
           if (!this.#info.compressed) {
             if (!this.writeFragments(body)) {
@@ -90773,7 +90877,56 @@ function evaluateGate(findings, cfg) {
     if (counts.medium > cfg.maxMedium) {
         reasons.push(`${counts.medium} medium (max ${cfg.maxMedium})`);
     }
-    return { passed: reasons.length === 0, counts, reasons };
+    return { passed: reasons.length === 0, counts, thresholds: { ...cfg }, reasons };
+}
+
+
+/***/ }),
+
+/***/ 73346:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.findingUrl = findingUrl;
+// Keyed by EngineName (not a bare string) so a typo in an engine key fails to
+// compile instead of silently never matching.
+// Only link when a canonical URL can be derived with confidence: a fixed
+// engine-doc naming convention. Engine-supplied URLs (Trivy, oxlint) and the
+// CWE fallback are handled separately in findingUrl().
+const ENGINE_RULE_URL = {
+    hadolint: (ruleId) => {
+        if (/^DL\d+$/.test(ruleId))
+            return `https://github.com/hadolint/hadolint/wiki/${ruleId}`;
+        if (/^SC\d+$/.test(ruleId))
+            return `https://www.shellcheck.net/wiki/${ruleId}`;
+        return undefined;
+    },
+    gosec: (ruleId) => (/^G\d+$/.test(ruleId) ? `https://securego.io/docs/rules/${ruleId.toLowerCase()}.html` : undefined),
+    eslint: (ruleId) => (ruleId.includes("/") ? undefined : `https://eslint.org/docs/latest/rules/${ruleId}`),
+    zizmor: (ruleId) => ruleId.startsWith("zizmor/") ? `https://docs.zizmor.sh/audits/#${ruleId.slice("zizmor/".length)}` : undefined,
+};
+// finding.url is engine-supplied (Trivy's PrimaryURL, oxlint's rule docs) and not
+// type-enforced beyond "string" — reject anything that isn't a well-formed
+// http(s) URL rather than rendering it as a link destination.
+function isHttpUrl(value) {
+    try {
+        const parsed = new URL(value);
+        return parsed.protocol === "http:" || parsed.protocol === "https:";
+    }
+    catch {
+        return false;
+    }
+}
+function findingUrl(finding) {
+    if (finding.url && isHttpUrl(finding.url))
+        return finding.url;
+    const specific = ENGINE_RULE_URL[finding.engine]?.(finding.ruleId);
+    if (specific)
+        return specific;
+    const cweMatch = finding.cwe ? /^CWE-(\d+)$/.exec(finding.cwe) : null;
+    return cweMatch ? `https://cwe.mitre.org/data/definitions/${cweMatch[1]}.html` : undefined;
 }
 
 
@@ -90820,7 +90973,6 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 // PolyScan GitHub Action — entry point.
 const core = __importStar(__nccwpck_require__(37484));
-const fs = __importStar(__nccwpck_require__(73024));
 const path = __importStar(__nccwpck_require__(76760));
 const artifact_1 = __nccwpck_require__(76846);
 const schema_1 = __nccwpck_require__(75060);
@@ -90842,6 +90994,7 @@ const gate_1 = __nccwpck_require__(81956);
 const sarif_1 = __nccwpck_require__(20866);
 const sbom_1 = __nccwpck_require__(20594);
 const summary_1 = __nccwpck_require__(28855);
+const report_1 = __nccwpck_require__(70665);
 const engines_1 = __nccwpck_require__(62616);
 const target_1 = __nccwpck_require__(76746);
 const tools_1 = __nccwpck_require__(51732);
@@ -90875,6 +91028,7 @@ function readConfig() {
         failOnEngineError: boolInput("fail-on-engine-error", true),
         wantSarif: boolInput("sarif", true),
         wantSbom: boolInput("sbom", false),
+        wantJsonReport: boolInput("json-report", true),
         uploadArtifacts: boolInput("upload-artifacts", true),
         artifactName: core.getInput("artifact-name") || artifact_2.DEFAULT_ARTIFACT_NAME,
         uploadSarif: boolInput("upload-sarif", false),
@@ -90954,7 +91108,8 @@ async function runEngines(config) {
         const startedAt = Date.now();
         const result = await runEngine(engine, config.target, config.trivyImage, config.opengrepConfig, config.semgrepExcludeRules, config.opengrepExcludeRules);
         normalizeEngineFindings(result, config.target);
-        const elapsedSeconds = ((Date.now() - startedAt) / 1000).toFixed(1);
+        result.durationMs = Date.now() - startedAt;
+        const elapsedSeconds = (result.durationMs / 1000).toFixed(1);
         core.info(`[${engine}] completed in ${elapsedSeconds}s: ${result.findings.length} findings ` +
             `(status=${result.status})`);
         if (result.note)
@@ -90968,25 +91123,32 @@ function sortedFindings(engineResults) {
     findings.sort((a, b) => rank[a.severity] - rank[b.severity] || a.engine.localeCompare(b.engine));
     return findings;
 }
-function writeReports(config, findings, summary) {
+function writeReports(config, findings, engineResults, summary, jsonReport) {
     const artifactFiles = [];
     let sarifPath = "";
     if (config.wantSarif) {
         sarifPath = path.join(config.outputDir, "polyscan.sarif");
-        fs.writeFileSync(sarifPath, (0, sarif_1.toSarif)(findings));
+        (0, target_1.writeReportFile)(sarifPath, (0, sarif_1.toSarif)(findings, engineResults));
         core.info(`Wrote SARIF: ${sarifPath}`);
         artifactFiles.push(sarifPath);
         core.setOutput("sarif-file", sarifPath);
     }
     if (config.wantSbom) {
         const sbomPath = path.join(config.outputDir, "polyscan.sbom.json");
-        fs.writeFileSync(sbomPath, (0, sbom_1.toSbom)(config.target));
+        (0, target_1.writeReportFile)(sbomPath, (0, sbom_1.toSbom)(config.target));
         core.info(`Wrote SBOM: ${sbomPath}`);
         artifactFiles.push(sbomPath);
         core.setOutput("sbom-file", sbomPath);
     }
+    if (config.wantJsonReport) {
+        const jsonPath = path.join(config.outputDir, "polyscan-report.json");
+        (0, target_1.writeReportFile)(jsonPath, jsonReport);
+        core.info(`Wrote JSON report: ${jsonPath}`);
+        artifactFiles.push(jsonPath);
+        core.setOutput("json-file", jsonPath);
+    }
     const summaryPath = path.join(config.outputDir, "polyscan-summary.md");
-    fs.writeFileSync(summaryPath, summary);
+    (0, target_1.writeReportFile)(summaryPath, summary);
     artifactFiles.push(summaryPath);
     return { files: artifactFiles, sarifPath };
 }
@@ -91054,13 +91216,25 @@ async function main() {
     (0, tools_1.assertSupportedPlatform)();
     const config = readConfig();
     core.info(`PolyScan scanning "${config.target}" with engines: ${config.engines.join(", ")}`);
+    const startedAt = new Date();
     const engineResults = await runEngines(config);
+    const context = {
+        target: path.relative((0, target_1.workspaceRoot)(), config.target).split(path.sep).join("/") || ".",
+        engines: config.engines,
+        maxConcurrency: config.maxConcurrency,
+        startedAt: startedAt.toISOString(),
+        durationMs: Date.now() - startedAt.getTime(),
+        github: (0, report_1.githubContext)(),
+    };
     const findings = sortedFindings(engineResults);
     const counts = (0, schema_1.countBySeverity)(findings);
     const gate = (0, gate_1.evaluateGate)(findings, config.gate);
-    const summary = (0, summary_1.renderSummary)(findings, counts, gate, config.gateEnforced, engineResults);
+    const summary = (0, summary_1.renderSummary)(findings, counts, gate, config.gateEnforced, engineResults, context);
+    const jsonReport = config.wantJsonReport
+        ? (0, report_1.toJsonReport)({ findings, counts, gate, gateEnforced: config.gateEnforced, engineResults, context })
+        : "";
     await publishSummary(summary);
-    const reports = writeReports(config, findings, summary);
+    const reports = writeReports(config, findings, engineResults, summary, jsonReport);
     if (config.uploadArtifacts && reports.files.length > 0) {
         await uploadReports(reports.files, config.outputDir, config.artifactName);
     }
@@ -91074,6 +91248,67 @@ async function main() {
 main().catch((err) => {
     core.setFailed(`PolyScan crashed: ${err instanceof Error ? err.stack : String(err)}`);
 });
+
+
+/***/ }),
+
+/***/ 70665:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.JSON_REPORT_SCHEMA_VERSION = void 0;
+exports.githubContext = githubContext;
+exports.toJsonReport = toJsonReport;
+// Scan context shared by all reports, and the machine-readable JSON report.
+const schema_1 = __nccwpck_require__(75060);
+const tool_versions_1 = __nccwpck_require__(88947);
+const package_json_1 = __importDefault(__nccwpck_require__(8330));
+exports.JSON_REPORT_SCHEMA_VERSION = 1;
+function githubContext(env = process.env) {
+    const context = {
+        repository: env.GITHUB_REPOSITORY || undefined,
+        ref: env.GITHUB_REF || undefined,
+        sha: env.GITHUB_SHA || undefined,
+        workflow: env.GITHUB_WORKFLOW || undefined,
+        job: env.GITHUB_JOB || undefined,
+        runId: env.GITHUB_RUN_ID || undefined,
+        runAttempt: env.GITHUB_RUN_ATTEMPT || undefined,
+    };
+    if (env.GITHUB_SERVER_URL && context.repository && context.runId) {
+        context.runUrl = `${env.GITHUB_SERVER_URL}/${context.repository}/actions/runs/${context.runId}`;
+    }
+    return context;
+}
+function toJsonReport(input) {
+    const { findings, counts, gate, gateEnforced, engineResults, context } = input;
+    const report = {
+        schemaVersion: exports.JSON_REPORT_SCHEMA_VERSION,
+        tool: { name: "PolyScan", version: package_json_1.default.version },
+        scan: context,
+        gate: {
+            enforced: gateEnforced,
+            passed: gate.passed,
+            thresholds: gate.thresholds,
+            reasons: gate.reasons,
+        },
+        counts,
+        engines: engineResults.map((result) => ({
+            engine: result.engine,
+            status: result.status,
+            pinnedVersion: (0, tool_versions_1.reportedPinnedVersion)(result),
+            durationMs: result.durationMs,
+            counts: (0, schema_1.countBySeverity)(result.findings),
+            note: result.note,
+        })),
+        findings,
+    };
+    return JSON.stringify(report, null, 2);
+}
 
 
 /***/ }),
@@ -91102,6 +91337,8 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.toSarif = toSarif;
+const links_1 = __nccwpck_require__(73346);
+const tool_versions_1 = __nccwpck_require__(88947);
 const package_json_1 = __importDefault(__nccwpck_require__(8330));
 function sarifLevel(sev) {
     switch (sev) {
@@ -91114,21 +91351,90 @@ function sarifLevel(sev) {
             return "note";
     }
 }
-function toSarif(findings) {
+// GitHub Code Scanning buckets rules by `security-severity`:
+// >= 9.0 critical, 7.0–8.9 high, 4.0–6.9 medium, 0.1–3.9 low.
+// Info findings carry no score so they are not shown as security alerts.
+const SECURITY_SEVERITY = {
+    critical: "9.5",
+    high: "8.0",
+    medium: "5.5",
+    low: "2.0",
+};
+// A rule-level value is only meaningful when every finding of the rule agrees on it.
+// Fallback IDs such as Trivy's TRIVY-VULN group unrelated findings, and a rule-level
+// security-severity would then override each alert's own severity in Code Scanning.
+function single(values) {
+    return values.size === 1 ? values.values().next().value : undefined;
+}
+function collectRules(findings) {
     // Deduplicate rules by engine/ruleId.
     const ruleMap = new Map();
     for (const f of findings) {
         const id = `${f.engine}/${f.ruleId}`;
-        if (!ruleMap.has(id)) {
-            ruleMap.set(id, { id, name: f.ruleId, desc: f.message });
+        let rule = ruleMap.get(id);
+        if (!rule) {
+            rule = { id, name: f.ruleId, desc: f.message, severities: new Set(), helpUris: new Set(), cwes: new Set() };
+            ruleMap.set(id, rule);
         }
+        rule.severities.add(f.severity);
+        rule.helpUris.add((0, links_1.findingUrl)(f));
+        if (f.cwe)
+            rule.cwes.add(f.cwe);
     }
-    const rules = [...ruleMap.values()].map((r) => ({
-        id: r.id,
-        name: r.name,
-        shortDescription: { text: `${r.name}` },
-        fullDescription: { text: r.desc },
+    return ruleMap;
+}
+function sarifRule(rule) {
+    const severity = single(rule.severities);
+    const securitySeverity = severity ? SECURITY_SEVERITY[severity] : undefined;
+    const helpUri = single(rule.helpUris);
+    const cweTags = [...rule.cwes].sort().map((cwe) => `external/cwe/${cwe.toLowerCase()}`);
+    return {
+        id: rule.id,
+        name: rule.name,
+        shortDescription: { text: `${rule.name}` },
+        fullDescription: { text: rule.desc },
+        ...(severity ? { defaultConfiguration: { level: sarifLevel(severity) } } : {}),
+        ...(helpUri ? { helpUri } : {}),
+        properties: {
+            tags: ["security", rule.id.split("/", 1)[0], ...cweTags],
+            ...(securitySeverity ? { "security-severity": securitySeverity } : {}),
+        },
+    };
+}
+function engineExtensions(engineResults) {
+    return engineResults.map((result) => {
+        const version = (0, tool_versions_1.reportedPinnedVersion)(result);
+        return {
+            name: result.engine,
+            ...(version ? { version } : {}),
+            properties: {
+                status: result.status,
+                findings: result.findings.length,
+                ...(result.durationMs === undefined ? {} : { durationMs: result.durationMs }),
+            },
+        };
+    });
+}
+function invocation(engineResults) {
+    const notifications = engineResults
+        .filter((result) => result.note)
+        .map((result) => ({
+        level: result.status === "failed" ? "error" : "note",
+        message: { text: `${result.engine} (${result.status}): ${result.note}` },
+        descriptor: { id: result.engine },
     }));
+    // One failed engine must not mark the merged run unsuccessful: Code Scanning would
+    // then discard the findings of every engine that did complete. The run only failed
+    // when engines failed and none succeeded.
+    const anyFailed = engineResults.some((result) => result.status === "failed");
+    const anySucceeded = engineResults.some((result) => result.status === "success");
+    return {
+        executionSuccessful: !anyFailed || anySucceeded,
+        ...(notifications.length > 0 ? { toolExecutionNotifications: notifications } : {}),
+    };
+}
+function toSarif(findings, engineResults) {
+    const rules = [...collectRules(findings).values()].map(sarifRule);
     const results = findings.map((f) => {
         const imageFinding = f.source?.startsWith("image:");
         return {
@@ -91167,10 +91473,13 @@ function toSarif(findings) {
                     driver: {
                         name: "PolyScan",
                         version: package_json_1.default.version,
+                        semanticVersion: package_json_1.default.version,
                         informationUri: "https://github.com/sraisl/polyscan-action",
                         rules,
                     },
+                    ...(engineResults ? { extensions: engineExtensions(engineResults) } : {}),
                 },
+                ...(engineResults ? { invocations: [invocation(engineResults)] } : {}),
                 results,
             },
         ],
@@ -91505,12 +91814,21 @@ function countBySeverity(findings) {
 /***/ }),
 
 /***/ 28855:
-/***/ ((__unused_webpack_module, exports) => {
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
 "use strict";
 
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.formatDuration = formatDuration;
 exports.renderSummary = renderSummary;
+// Render a Markdown job summary for GitHub Actions.
+const schema_1 = __nccwpck_require__(75060);
+const links_1 = __nccwpck_require__(73346);
+const tool_versions_1 = __nccwpck_require__(88947);
+const package_json_1 = __importDefault(__nccwpck_require__(8330));
 const SEV_EMOJI = {
     critical: "🟣",
     high: "🔴",
@@ -91534,47 +91852,9 @@ function code(value) {
 function textCell(value) {
     return tableCell(value).replaceAll("[", String.raw `\[`);
 }
-// Keyed by EngineName (not a bare string) so a typo in an engine key fails to
-// compile instead of silently never matching.
-// Only link when a canonical URL can be derived with confidence: a fixed
-// engine-doc naming convention. Engine-supplied URLs (Trivy, oxlint) and the
-// CWE fallback are handled separately in findingUrl().
-const ENGINE_RULE_URL = {
-    hadolint: (ruleId) => {
-        if (/^DL\d+$/.test(ruleId))
-            return `https://github.com/hadolint/hadolint/wiki/${ruleId}`;
-        if (/^SC\d+$/.test(ruleId))
-            return `https://www.shellcheck.net/wiki/${ruleId}`;
-        return undefined;
-    },
-    gosec: (ruleId) => (/^G\d+$/.test(ruleId) ? `https://securego.io/docs/rules/${ruleId.toLowerCase()}.html` : undefined),
-    eslint: (ruleId) => (ruleId.includes("/") ? undefined : `https://eslint.org/docs/latest/rules/${ruleId}`),
-    zizmor: (ruleId) => ruleId.startsWith("zizmor/") ? `https://docs.zizmor.sh/audits/#${ruleId.slice("zizmor/".length)}` : undefined,
-};
-// finding.url is engine-supplied (Trivy's PrimaryURL, oxlint's rule docs) and not
-// type-enforced beyond "string" — reject anything that isn't a well-formed
-// http(s) URL rather than rendering it as a link destination.
-function isHttpUrl(value) {
-    try {
-        const parsed = new URL(value);
-        return parsed.protocol === "http:" || parsed.protocol === "https:";
-    }
-    catch {
-        return false;
-    }
-}
-function findingUrl(finding) {
-    if (finding.url && isHttpUrl(finding.url))
-        return finding.url;
-    const specific = ENGINE_RULE_URL[finding.engine]?.(finding.ruleId);
-    if (specific)
-        return specific;
-    const cweMatch = finding.cwe ? /^CWE-(\d+)$/.exec(finding.cwe) : null;
-    return cweMatch ? `https://cwe.mitre.org/data/definitions/${cweMatch[1]}.html` : undefined;
-}
 function ruleCell(finding) {
     const label = code(finding.ruleId);
-    const url = findingUrl(finding);
+    const url = (0, links_1.findingUrl)(finding);
     // Angle-bracket the destination so a URL containing "(" or ")" (unlikely today,
     // but not guaranteed for future engine-supplied PrimaryURL values) can't
     // truncate the link.
@@ -91600,14 +91880,49 @@ function engineIcon(result) {
         return "ℹ️";
     return "⚠️";
 }
+function formatDuration(ms) {
+    const seconds = ms / 1000;
+    if (seconds < 59.95)
+        return `${seconds.toFixed(1)}s`;
+    // Round before splitting so 119.6s carries into the minutes ("2m 0s", not "1m 60s").
+    const total = Math.round(seconds);
+    return `${Math.floor(total / 60)}m ${total % 60}s`;
+}
+// A zero count renders as "·" so the non-zero cells stand out in wide tables.
+function countCell(count) {
+    return count === 0 ? "·" : String(count);
+}
 function engineSection(results) {
-    const lines = ["### Engines"];
+    const lines = [
+        "### Engines",
+        "",
+        `| Engine | Status | Pinned version | Duration | ${schema_1.SEVERITY_ORDER.map((sev) => SEV_EMOJI[sev]).join(" | ")} | Note |`,
+        `|---|---|---|---|${schema_1.SEVERITY_ORDER.map(() => "---:").join("|")}|---|`,
+    ];
     for (const result of results) {
-        const note = result.note ? ` — _${tableCell(result.note)}_` : "";
-        lines.push(`- ${engineIcon(result)} **${tableCell(result.engine)}**: ` +
-            `${result.findings.length} findings (${result.status})${note}`);
+        const counts = (0, schema_1.countBySeverity)(result.findings);
+        const version = (0, tool_versions_1.reportedPinnedVersion)(result);
+        const duration = result.durationMs === undefined ? "–" : formatDuration(result.durationMs);
+        lines.push(`| **${tableCell(result.engine)}** | ${engineIcon(result)} ${result.status} | ` +
+            `${version ? code(version) : "–"} | ${duration} | ` +
+            `${schema_1.SEVERITY_ORDER.map((sev) => countCell(counts[sev])).join(" | ")} | ` +
+            `${result.note ? textCell(result.note) : ""} |`);
     }
     return [...lines, ""];
+}
+function shortSha(sha) {
+    return /^[0-9a-f]{40}$/i.test(sha) ? sha.slice(0, 7) : sha;
+}
+function contextSection(context) {
+    const parts = [`**Target:** ${code(context.target)}`];
+    const { github } = context;
+    if (github.sha) {
+        const ref = github.ref ? ` on ${code(github.ref)}` : "";
+        parts.push(`**Commit:** ${code(shortSha(github.sha))}${ref}`);
+    }
+    parts.push(`**Engines:** ${context.engines.length}`, `**Duration:** ${formatDuration(context.durationMs)}`);
+    parts.push(`**PolyScan:** ${code(`v${package_json_1.default.version}`)}`);
+    return [parts.join(" · "), ""];
 }
 function findingLocation(finding) {
     const cleanFile = finding.file.startsWith("./") ? finding.file.slice(2) : finding.file;
@@ -91683,7 +91998,9 @@ function findingsSection(findings) {
 function gateSection(gate, enforced) {
     let result;
     if (!enforced) {
-        result = "> ℹ️ Quality Gate not enforced (`gate: false`).";
+        result = gate.passed
+            ? "> ℹ️ Quality Gate not enforced (`gate: false`) — thresholds satisfied."
+            : `> ℹ️ Quality Gate not enforced (\`gate: false\`) — would have failed: ${gate.reasons.join(", ")}.`;
     }
     else if (gate.passed) {
         result = "> ✅ **Passed** — thresholds satisfied.";
@@ -91691,12 +92008,23 @@ function gateSection(gate, enforced) {
     else {
         result = `> ❌ **Failed** — ${gate.reasons.join(", ")}.`;
     }
-    return ["### Quality Gate", result, ""];
+    const rows = [
+        ["critical", gate.thresholds.maxCritical],
+        ["high", gate.thresholds.maxHigh],
+        ["medium", gate.thresholds.maxMedium],
+    ];
+    const lines = ["### Quality Gate", result, "", "| Severity | Found | Max | Result |", "|---|---:|---:|---|"];
+    for (const [severity, max] of rows) {
+        const found = gate.counts[severity];
+        lines.push(`| ${SEV_EMOJI[severity]} ${severity} | ${found} | ${max} | ${found > max ? "❌ exceeded" : "✅ ok"} |`);
+    }
+    return [...lines, "", "_Low and info findings are reported but not gated._", ""];
 }
-function renderSummary(findings, counts, gate, gateEnforced, engineResults) {
+function renderSummary(findings, counts, gate, gateEnforced, engineResults, context) {
     return [
         "## 🔍 PolyScan Report",
         "",
+        ...(context ? contextSection(context) : []),
         ...severitySection(counts),
         ...engineSection(engineResults),
         ...secretsSection(findings),
@@ -91752,6 +92080,7 @@ exports.workspaceRoot = workspaceRoot;
 exports.resolveTarget = resolveTarget;
 exports.resolveOutputDir = resolveOutputDir;
 exports.normalizeFindingPath = normalizeFindingPath;
+exports.writeReportFile = writeReportFile;
 const fs = __importStar(__nccwpck_require__(73024));
 const path = __importStar(__nccwpck_require__(76760));
 const node_url_1 = __nccwpck_require__(73136);
@@ -91823,6 +92152,28 @@ function normalizeFindingPath(file, target) {
     assertInsideWorkspace(absolute, "finding path");
     return path.relative(workspace, absolute).split(path.sep).join("/");
 }
+// Report files land in a directory a pull request can populate, so a checked-in
+// symlink named like a report would otherwise redirect the write to its target,
+// possibly outside the workspace. O_NOFOLLOW refuses a symlink as the final path
+// component; resolveOutputDir has already validated the directories above it.
+function writeReportFile(file, content) {
+    let fd;
+    try {
+        fd = fs.openSync(file, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_TRUNC | fs.constants.O_NOFOLLOW, 0o644);
+    }
+    catch (err) {
+        if (err.code === "ELOOP") {
+            throw new Error(`refusing to write report through symlink: ${file}`);
+        }
+        throw err;
+    }
+    try {
+        fs.writeFileSync(fd, content);
+    }
+    finally {
+        fs.closeSync(fd);
+    }
+}
 
 
 /***/ }),
@@ -91839,6 +92190,8 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.TOOLS = exports.TOOL_LOCK_SCHEMA_VERSION = void 0;
 exports.githubReleaseUrl = githubReleaseUrl;
 exports.mavenArtifactUrl = mavenArtifactUrl;
+exports.engineVersion = engineVersion;
+exports.reportedPinnedVersion = reportedPinnedVersion;
 const tools_lock_json_1 = __importDefault(__nccwpck_require__(81070));
 exports.TOOL_LOCK_SCHEMA_VERSION = tools_lock_json_1.default.schemaVersion;
 exports.TOOLS = tools_lock_json_1.default.tools;
@@ -91854,6 +92207,20 @@ function mavenArtifactUrl(tool) {
     const groupPath = tool.group.replaceAll(".", "/");
     const filename = `${tool.artifact}-${tool.version}.${tool.extension}`;
     return `https://repo1.maven.org/maven2/${groupPath}/${tool.artifact}/${tool.version}/${filename}`;
+}
+// Pinned scanner version reported for an engine. SpotBugs also loads the
+// FindSecBugs plugin, whose rules produce most of its security findings.
+function engineVersion(engine) {
+    if (engine === "spotbugs") {
+        return `${exports.TOOLS.spotbugs.version} + findsecbugs ${exports.TOOLS.findsecbugs.version}`;
+    }
+    return exports.TOOLS[engine]?.version;
+}
+// The lock file records what PolyScan installs, not necessarily what ran: several
+// engines use a binary already on PATH. Reports therefore label it the pinned
+// version, and leave it out for engines that were skipped or failed.
+function reportedPinnedVersion(result) {
+    return result.status === "success" ? engineVersion(result.engine) : undefined;
 }
 
 
@@ -148524,7 +148891,7 @@ module.exports = /*#__PURE__*/JSON.parse('{"name":"@actions/artifact","version":
 /***/ ((module) => {
 
 "use strict";
-module.exports = /*#__PURE__*/JSON.parse('{"name":"polyscan-action","version":"17.1.0","description":"Multi-language SAST orchestrator as a native TypeScript GitHub Action with Quality Gate, SARIF, CycloneDX SBOM and job summary","main":"dist/index.js","engines":{"node":"24.x"},"scripts":{"prebuild":"node scripts/require-node24.cjs","build":"ncc build src/main.ts -o dist --source-map --license licenses.txt && node scripts/check-bundle.cjs","build:test":"tsc -p tsconfig.test.json","typecheck":"tsc --noEmit","test":"npm run build:test && node --test \\"dist-test/test/**/*.js\\"","all":"npm run typecheck && npm run build","engines:list":"node scripts/engine-tools.mjs list","engines:check":"node scripts/engine-tools.mjs check","engines:update":"node scripts/engine-tools.mjs update"},"keywords":["sast","security","semgrep","opengrep","bandit","eslint","gosec","spotbugs","zizmor","trufflehog","sarif","sbom","github-action"],"author":"Stefan Raisl","license":"MIT","dependencies":{"@actions/artifact":"^5.0.3","@actions/core":"^1.11.1","@actions/exec":"^1.1.1","@actions/tool-cache":"^2.0.2"},"devDependencies":{"@types/node":"26.6.3","@vercel/ncc":"0.45.0","typescript":"5.9.3"},"overrides":{"undici":"^6.28.0","brace-expansion":"5.0.12"}}');
+module.exports = /*#__PURE__*/JSON.parse('{"name":"polyscan-action","version":"17.1.0","description":"Multi-language SAST orchestrator as a native TypeScript GitHub Action with Quality Gate, SARIF, CycloneDX SBOM and job summary","main":"dist/index.js","engines":{"node":"24.x"},"scripts":{"prebuild":"node scripts/require-node24.cjs","build":"ncc build src/main.ts -o dist --source-map --license licenses.txt && node scripts/check-bundle.cjs","build:test":"tsc -p tsconfig.test.json","typecheck":"tsc --noEmit","test":"npm run build:test && node --test \\"dist-test/test/**/*.js\\"","all":"npm run typecheck && npm run build","engines:list":"node scripts/engine-tools.mjs list","engines:check":"node scripts/engine-tools.mjs check","engines:update":"node scripts/engine-tools.mjs update"},"keywords":["sast","security","semgrep","opengrep","bandit","eslint","gosec","spotbugs","zizmor","trufflehog","sarif","sbom","github-action"],"author":"Stefan Raisl","license":"MIT","dependencies":{"@actions/artifact":"^5.0.3","@actions/core":"^1.11.1","@actions/exec":"^1.1.1","@actions/tool-cache":"^2.0.2"},"devDependencies":{"@types/node":"26.6.3","@vercel/ncc":"0.45.0","typescript":"5.9.3"},"overrides":{"undici":"^6.29.1","brace-expansion":"5.0.12"}}');
 
 /***/ }),
 

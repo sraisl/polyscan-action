@@ -1,6 +1,6 @@
 # PolyScan Action
 
-**Multi-language SAST as a native GitHub Action.** One step runs all configured security engines — Semgrep, OpenGrep, Bandit, oxlint, ESLint, SpotBugs, detekt, gosec, Trivy, gitleaks, betterleaks, hadolint and zizmor — normalizes every result into a single schema, enforces a configurable **Quality Gate**, and emits **SARIF**, a **CycloneDX SBOM** and a rich **job summary** — plus optional artifact upload.
+**Multi-language SAST as a native GitHub Action.** One step runs all configured security engines — Semgrep, OpenGrep, Bandit, oxlint, ESLint, SpotBugs, detekt, gosec, Trivy, gitleaks, betterleaks, hadolint and zizmor — normalizes every result into a single schema, enforces a configurable **Quality Gate**, and emits **SARIF**, a **CycloneDX SBOM**, a **JSON report** and a rich **job summary** — plus optional artifact upload.
 
 Written in TypeScript, bundled with `@vercel/ncc`, runs as a native GitHub Action on the `node24` runtime.
 
@@ -61,7 +61,8 @@ jobs:
 | `fail-on-engine-error` | `true` | Fail after reports are written if a requested engine cannot complete |
 | `sarif` | `true` | Write `polyscan.sarif` (SARIF 2.1.0) |
 | `sbom` | `false` | Write `polyscan.sbom.json` (CycloneDX 1.5) |
-| `upload-artifacts` | `true` | Upload SARIF + SBOM + summary as a workflow artifact |
+| `json-report` | `true` | Write `polyscan-report.json` (scan context, engine status and all findings; see [Reports](#reports)) |
+| `upload-artifacts` | `true` | Upload SARIF + SBOM + JSON report + summary as a workflow artifact |
 | `artifact-name` | `polyscan-reports` | Artifact name; falls back to `<name>-<job>`, then `<name>-<job>-<random>`, if the name is already taken in the workflow run (matrix, several PolyScan steps) |
 | `upload-sarif` | `false` | Emit a hint to upload SARIF to code scanning (use the CodeQL step) |
 | `trivy-image` | _(empty)_ | Docker image to scan with `trivy image` (e.g. `myapp:latest`). Image must be available in the local Docker daemon. Runs in addition to the filesystem scan. |
@@ -78,6 +79,35 @@ jobs:
 | `failed-engines` | Comma-separated engines that failed |
 | `sarif-file` | Path to the SARIF file |
 | `sbom-file` | Path to the SBOM file |
+| `json-file` | Path to the JSON report |
+
+## Reports
+
+All report files are written to `output-dir`.
+
+The engine version in the reports is the version pinned in `tools.lock.json`, shown only for engines that ran
+successfully. Some engines (hadolint, gosec, zizmor, gitleaks, betterleaks, trufflehog, trivy) use a binary that is
+already on `PATH` without checking its version, so on runners that preinstall one of these tools the binary that ran
+can differ.
+
+- **Job summary** (`polyscan-summary.md`, also shown on the workflow run page): scanned target, commit and ref, total
+  duration and PolyScan version; per engine the status, pinned tool version, duration, findings per severity and any
+  note (why it was skipped or failed); secrets and container-image findings in their own tables; the first 50 findings;
+  and the Quality Gate as a table of found vs. allowed counts per gated severity.
+- **SARIF** (`polyscan.sarif`): one rule per `engine/ruleId` with `security` and `external/cwe/cwe-N` tags. When all
+  findings of a rule share one severity, the rule also carries `security-severity` and a default level, so Code
+  Scanning shows critical/high/medium/low; when they share one documentation link, it carries that as `helpUri`.
+  Rules whose findings disagree (for example Trivy's fallback `TRIVY-VULN`) get neither, and each alert keeps its own
+  level. Pinned engine versions and run status are listed under `tool.extensions`, and engine failures or skip reasons
+  under `invocations[0].toolExecutionNotifications`. The run is marked `executionSuccessful: false` only when engines
+  failed and none succeeded, so one failing engine does not discard the findings of the others. PolyScan sets no
+  `partialFingerprints`: `github/codeql-action/upload-sarif` computes `primaryLocationLineHash` from the source when
+  it uploads the file, which is what Code Scanning uses to track alerts across runs. If you upload the SARIF through
+  the REST API instead, that hash is missing and alerts may be duplicated.
+- **JSON report** (`polyscan-report.json`, `schemaVersion: 1`): for further processing in scripts and dashboards.
+  Contains `tool`, `scan` (target, requested engines, concurrency, start time, duration and the GitHub repository,
+  ref, SHA, workflow, job and run URL), `gate` (enforced, passed, thresholds, reasons), `counts`, `engines` (status,
+  `pinnedVersion`, duration, counts per severity, note) and every normalized `finding` without the 50-row limit.
 
 ## Engines
 
