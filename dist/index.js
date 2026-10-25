@@ -91333,46 +91333,12 @@ function parseExcludedRules(input) {
 
 "use strict";
 
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.toSarif = toSarif;
 // SARIF 2.1.0 serializer (GitHub Code Scanning compatible).
-const crypto = __importStar(__nccwpck_require__(77598));
 const schema_1 = __nccwpck_require__(75060);
 const links_1 = __nccwpck_require__(73346);
 const tool_versions_1 = __nccwpck_require__(88947);
@@ -91433,21 +91399,6 @@ function sarifRule(rule) {
         },
     };
 }
-// Line-independent fingerprint, so an alert keeps its identity when code above it
-// moves. Identical findings in one file are told apart by their occurrence index.
-function fingerprints(findings) {
-    const seen = new Map();
-    return findings.map((f) => {
-        const hash = crypto
-            .createHash("sha256")
-            .update([f.engine, f.ruleId, f.source ?? "", f.file, f.message].join("\0"))
-            .digest("hex")
-            .slice(0, 32);
-        const occurrence = (seen.get(hash) ?? 0) + 1;
-        seen.set(hash, occurrence);
-        return `${hash}:${occurrence}`;
-    });
-}
 function engineExtensions(engineResults) {
     return engineResults.map((result) => {
         const version = (0, tool_versions_1.engineVersion)(result.engine);
@@ -91477,14 +91428,12 @@ function invocation(engineResults) {
 }
 function toSarif(findings, engineResults) {
     const rules = [...collectRules(findings).values()].map(sarifRule);
-    const prints = fingerprints(findings);
-    const results = findings.map((f, index) => {
+    const results = findings.map((f) => {
         const imageFinding = f.source?.startsWith("image:");
         return {
             ruleId: `${f.engine}/${f.ruleId}`,
             level: sarifLevel(f.severity),
             message: { text: f.message },
-            partialFingerprints: { "polyscanFindingHash/v1": prints[index] },
             properties: {
                 engine: f.engine,
                 severity: f.severity,

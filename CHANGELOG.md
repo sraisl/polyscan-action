@@ -22,9 +22,8 @@ tags and must not be reused or moved.
   table with each engine's pinned tool version, duration and findings per severity. The Quality Gate section lists
   found vs. allowed counts per gated severity.
 - SARIF rules carry `security-severity`, `security`/CWE tags, a default level and `helpUri` where known, so GitHub
-  Code Scanning shows severities and links to rule documentation. Results carry a line-independent
-  `partialFingerprints` entry; engine versions are listed under `tool.extensions` and engine failures or skip
-  reasons under `invocations`.
+  Code Scanning shows severities and links to rule documentation. Engine versions are listed under
+  `tool.extensions` and engine failures or skip reasons under `invocations`.
 
 ### Security
 

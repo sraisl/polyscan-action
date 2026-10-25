@@ -84,20 +84,6 @@ test("toSarif adds code scanning rule metadata from the highest severity of a ru
   assert.equal(info.helpUri, undefined);
 });
 
-test("toSarif fingerprints are line-independent and distinguish repeated findings", () => {
-  const base: Finding = { engine: "bandit", ruleId: "B307", severity: "high", message: "eval", file: "a.py", line: 3 };
-  const prints = (findings: Finding[]) =>
-    JSON.parse(toSarif(findings)).runs[0].results.map(
-      (result: { partialFingerprints: Record<string, string> }) => result.partialFingerprints["polyscanFindingHash/v1"],
-    );
-
-  const [first, second] = prints([base, { ...base, line: 20 }]);
-  assert.match(first, /^[0-9a-f]{32}:1$/);
-  assert.equal(second, first.replace(/:1$/, ":2"));
-  assert.equal(prints([{ ...base, line: 99 }])[0], first);
-  assert.notEqual(prints([{ ...base, file: "b.py" }])[0], first);
-});
-
 test("toSarif records engine versions and engine failures when engine results are given", () => {
   const engines: EngineResult[] = [
     { engine: "bandit", findings: [], status: "success", durationMs: 1200 },

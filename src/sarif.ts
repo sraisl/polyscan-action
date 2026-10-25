@@ -1,5 +1,4 @@
 // SARIF 2.1.0 serializer (GitHub Code Scanning compatible).
-import * as crypto from "node:crypto";
 import { EngineResult, Finding, SEVERITY_ORDER, Severity } from "./schema";
 import { findingUrl } from "./links";
 import { engineVersion } from "./tool-versions";
@@ -74,22 +73,6 @@ function sarifRule(rule: RuleSummary) {
   };
 }
 
-// Line-independent fingerprint, so an alert keeps its identity when code above it
-// moves. Identical findings in one file are told apart by their occurrence index.
-function fingerprints(findings: Finding[]): string[] {
-  const seen = new Map<string, number>();
-  return findings.map((f) => {
-    const hash = crypto
-      .createHash("sha256")
-      .update([f.engine, f.ruleId, f.source ?? "", f.file, f.message].join("\0"))
-      .digest("hex")
-      .slice(0, 32);
-    const occurrence = (seen.get(hash) ?? 0) + 1;
-    seen.set(hash, occurrence);
-    return `${hash}:${occurrence}`;
-  });
-}
-
 function engineExtensions(engineResults: EngineResult[]) {
   return engineResults.map((result) => {
     const version = engineVersion(result.engine);
@@ -121,15 +104,13 @@ function invocation(engineResults: EngineResult[]) {
 
 export function toSarif(findings: Finding[], engineResults?: EngineResult[]): string {
   const rules = [...collectRules(findings).values()].map(sarifRule);
-  const prints = fingerprints(findings);
 
-  const results = findings.map((f, index) => {
+  const results = findings.map((f) => {
     const imageFinding = f.source?.startsWith("image:");
     return {
       ruleId: `${f.engine}/${f.ruleId}`,
       level: sarifLevel(f.severity),
       message: { text: f.message },
-      partialFingerprints: { "polyscanFindingHash/v1": prints[index] },
       properties: {
         engine: f.engine,
         severity: f.severity,

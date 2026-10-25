@@ -91,9 +91,11 @@ All report files are written to `output-dir`.
   and the Quality Gate as a table of found vs. allowed counts per gated severity.
 - **SARIF** (`polyscan.sarif`): one rule per `engine/ruleId` with `security-severity` (taken from the rule's most
   severe finding, so Code Scanning shows critical/high/medium/low), `security` and `external/cwe/cwe-N` tags, and a
-  `helpUri` where a documentation link is known. Each result carries a line-independent `partialFingerprints` entry,
-  so an alert keeps its identity when code above it moves. Engine versions and run status are listed under
-  `tool.extensions`, and engine failures or skip reasons under `invocations[0].toolExecutionNotifications`.
+  `helpUri` where a documentation link is known. Engine versions and run status are listed under `tool.extensions`,
+  and engine failures or skip reasons under `invocations[0].toolExecutionNotifications`. PolyScan sets no
+  `partialFingerprints`: `github/codeql-action/upload-sarif` computes `primaryLocationLineHash` from the source when
+  it uploads the file, which is what Code Scanning uses to track alerts across runs. If you upload the SARIF through
+  the REST API instead, that hash is missing and alerts may be duplicated.
 - **JSON report** (`polyscan-report.json`, `schemaVersion: 1`): for further processing in scripts and dashboards.
   Contains `tool`, `scan` (target, requested engines, concurrency, start time, duration and the GitHub repository,
   ref, SHA, workflow, job and run URL), `gate` (enforced, passed, thresholds, reasons), `counts`, `engines` (status,
