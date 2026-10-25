@@ -198,6 +198,10 @@ npm run build      # bundles src/main.ts -> dist/index.js (must be committed)
 
 > The `dist/` folder is committed on purpose — GitHub runs the bundled `dist/index.js` directly.
 
+With [mise](https://mise.jdx.dev/) and [just](https://just.systems/) installed, `mise.toml` pins Node.js 24 and
+`just dist` runs the same steps (`npm ci`, typecheck, tests, build) under that Node version, also when started from
+an IDE. Keep `mise.toml` aligned with `.nvmrc` and `engines.node` in `package.json`.
+
 ## Third-party tools & licenses
 
 PolyScan itself is MIT-licensed, and its bundled `dist/index.js` only pulls in permissively

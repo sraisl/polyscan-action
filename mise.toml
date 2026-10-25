@@ -1,0 +1,3 @@
+[tools]
+# Keep aligned with .nvmrc, package.json engines.node, and the bundle build guard.
+node = "24"
