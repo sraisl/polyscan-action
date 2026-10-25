@@ -1,6 +1,5 @@
 // PolyScan GitHub Action — entry point.
 import * as core from "@actions/core";
-import * as fs from "node:fs";
 import * as path from "node:path";
 import { DefaultArtifactClient } from "@actions/artifact";
 
@@ -25,7 +24,7 @@ import { toSbom } from "./sbom";
 import { renderSummary } from "./summary";
 import { ScanContext, githubContext, toJsonReport } from "./report";
 import { resolveEngines, unknownEngines, SUPPORTED_ENGINES } from "./engines";
-import { normalizeFindingPath, resolveOutputDir, resolveTarget, workspaceRoot } from "./target";
+import { normalizeFindingPath, resolveOutputDir, resolveTarget, workspaceRoot, writeReportFile } from "./target";
 import { assertSupportedPlatform } from "./tools";
 import { mapConcurrentWithBarriers, parseMaxConcurrency } from "./scheduler";
 import { parseExcludedRules } from "./rule-exclusions";
@@ -223,7 +222,7 @@ function writeReports(
   let sarifPath = "";
   if (config.wantSarif) {
     sarifPath = path.join(config.outputDir, "polyscan.sarif");
-    fs.writeFileSync(sarifPath, toSarif(findings, engineResults));
+    writeReportFile(sarifPath, toSarif(findings, engineResults));
     core.info(`Wrote SARIF: ${sarifPath}`);
     artifactFiles.push(sarifPath);
     core.setOutput("sarif-file", sarifPath);
@@ -231,7 +230,7 @@ function writeReports(
 
   if (config.wantSbom) {
     const sbomPath = path.join(config.outputDir, "polyscan.sbom.json");
-    fs.writeFileSync(sbomPath, toSbom(config.target));
+    writeReportFile(sbomPath, toSbom(config.target));
     core.info(`Wrote SBOM: ${sbomPath}`);
     artifactFiles.push(sbomPath);
     core.setOutput("sbom-file", sbomPath);
@@ -239,14 +238,14 @@ function writeReports(
 
   if (config.wantJsonReport) {
     const jsonPath = path.join(config.outputDir, "polyscan-report.json");
-    fs.writeFileSync(jsonPath, jsonReport);
+    writeReportFile(jsonPath, jsonReport);
     core.info(`Wrote JSON report: ${jsonPath}`);
     artifactFiles.push(jsonPath);
     core.setOutput("json-file", jsonPath);
   }
 
   const summaryPath = path.join(config.outputDir, "polyscan-summary.md");
-  fs.writeFileSync(summaryPath, summary);
+  writeReportFile(summaryPath, summary);
   artifactFiles.push(summaryPath);
   return { files: artifactFiles, sarifPath };
 }

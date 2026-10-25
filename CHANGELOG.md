@@ -27,6 +27,10 @@ tags and must not be reused or moved.
 
 ### Security
 
+- Report files (`polyscan.sarif`, `polyscan.sbom.json`, `polyscan-report.json`, `polyscan-summary.md`) are no
+  longer written through a symlink. A repository could check in a symlink with a report's name that points outside
+  the workspace, and the write followed it and overwrote the target. PolyScan now fails with
+  `refusing to write report through symlink` instead.
 - Bundled `undici` raised to 6.29.1 (GHSA-4qv8-2p9j-2685, GHSA-xjj6-f33q-929c: denial of service via the
   EventSource parser and excessive content-encodings).
 

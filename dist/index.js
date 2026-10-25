@@ -90973,7 +90973,6 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 // PolyScan GitHub Action — entry point.
 const core = __importStar(__nccwpck_require__(37484));
-const fs = __importStar(__nccwpck_require__(73024));
 const path = __importStar(__nccwpck_require__(76760));
 const artifact_1 = __nccwpck_require__(76846);
 const schema_1 = __nccwpck_require__(75060);
@@ -91129,27 +91128,27 @@ function writeReports(config, findings, engineResults, summary, jsonReport) {
     let sarifPath = "";
     if (config.wantSarif) {
         sarifPath = path.join(config.outputDir, "polyscan.sarif");
-        fs.writeFileSync(sarifPath, (0, sarif_1.toSarif)(findings, engineResults));
+        (0, target_1.writeReportFile)(sarifPath, (0, sarif_1.toSarif)(findings, engineResults));
         core.info(`Wrote SARIF: ${sarifPath}`);
         artifactFiles.push(sarifPath);
         core.setOutput("sarif-file", sarifPath);
     }
     if (config.wantSbom) {
         const sbomPath = path.join(config.outputDir, "polyscan.sbom.json");
-        fs.writeFileSync(sbomPath, (0, sbom_1.toSbom)(config.target));
+        (0, target_1.writeReportFile)(sbomPath, (0, sbom_1.toSbom)(config.target));
         core.info(`Wrote SBOM: ${sbomPath}`);
         artifactFiles.push(sbomPath);
         core.setOutput("sbom-file", sbomPath);
     }
     if (config.wantJsonReport) {
         const jsonPath = path.join(config.outputDir, "polyscan-report.json");
-        fs.writeFileSync(jsonPath, jsonReport);
+        (0, target_1.writeReportFile)(jsonPath, jsonReport);
         core.info(`Wrote JSON report: ${jsonPath}`);
         artifactFiles.push(jsonPath);
         core.setOutput("json-file", jsonPath);
     }
     const summaryPath = path.join(config.outputDir, "polyscan-summary.md");
-    fs.writeFileSync(summaryPath, summary);
+    (0, target_1.writeReportFile)(summaryPath, summary);
     artifactFiles.push(summaryPath);
     return { files: artifactFiles, sarifPath };
 }
@@ -92072,6 +92071,7 @@ exports.workspaceRoot = workspaceRoot;
 exports.resolveTarget = resolveTarget;
 exports.resolveOutputDir = resolveOutputDir;
 exports.normalizeFindingPath = normalizeFindingPath;
+exports.writeReportFile = writeReportFile;
 const fs = __importStar(__nccwpck_require__(73024));
 const path = __importStar(__nccwpck_require__(76760));
 const node_url_1 = __nccwpck_require__(73136);
@@ -92142,6 +92142,28 @@ function normalizeFindingPath(file, target) {
     }
     assertInsideWorkspace(absolute, "finding path");
     return path.relative(workspace, absolute).split(path.sep).join("/");
+}
+// Report files land in a directory a pull request can populate, so a checked-in
+// symlink named like a report would otherwise redirect the write to its target,
+// possibly outside the workspace. O_NOFOLLOW refuses a symlink as the final path
+// component; resolveOutputDir has already validated the directories above it.
+function writeReportFile(file, content) {
+    let fd;
+    try {
+        fd = fs.openSync(file, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_TRUNC | fs.constants.O_NOFOLLOW, 0o644);
+    }
+    catch (err) {
+        if (err.code === "ELOOP") {
+            throw new Error(`refusing to write report through symlink: ${file}`);
+        }
+        throw err;
+    }
+    try {
+        fs.writeFileSync(fd, content);
+    }
+    finally {
+        fs.closeSync(fd);
+    }
 }
 
 
