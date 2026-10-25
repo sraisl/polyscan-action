@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { renderSummary } from "../src/summary";
+import { formatDuration, renderSummary } from "../src/summary";
 import { countBySeverity, EngineResult, Finding } from "../src/schema";
 import { evaluateGate } from "../src/gate";
 import { parseSemgrepJson } from "../src/engines/semgrep";
@@ -308,7 +308,7 @@ test("renderSummary shows scan context, per-engine versions, durations and sever
   assert.ok(
     summary.includes(`| **bandit** | ✅ success | \`${TOOLS.bandit.version}\` | 1m 23s | · | 1 | · | 1 | · |  |`),
   );
-  assert.ok(summary.includes(`| **detekt** | ℹ️ skipped | \`${TOOLS.detekt.version}\` | 0.0s | · | · | · | · | · | no Kotlin files |`));
+  assert.ok(summary.includes("| **detekt** | ℹ️ skipped | – | 0.0s | · | · | · | · | · | no Kotlin files |"));
 });
 
 test("renderSummary gate table compares found counts with thresholds", () => {
@@ -325,4 +325,13 @@ test("renderSummary gate table compares found counts with thresholds", () => {
 
   const advisory = renderSummary(findings, countBySeverity(findings), gate, false, engines);
   assert.match(advisory, /not enforced \(`gate: false`\) — would have failed: 1 high \(max 0\)/);
+});
+
+test("formatDuration carries rounded seconds into the minutes", () => {
+  assert.equal(formatDuration(8_349), "8.3s");
+  assert.equal(formatDuration(59_940), "59.9s");
+  assert.equal(formatDuration(59_960), "1m 0s");
+  assert.equal(formatDuration(83_400), "1m 23s");
+  assert.equal(formatDuration(119_600), "2m 0s");
+  assert.equal(formatDuration(3_599_700), "60m 0s");
 });

@@ -50,10 +50,10 @@ test("toSarif omits file locations for container image findings", () => {
   assert.equal(result.properties.source, "image:example/app:latest");
 });
 
-test("toSarif adds code scanning rule metadata from the highest severity of a rule", () => {
+test("toSarif adds code scanning rule metadata for rules with a single severity", () => {
   const findings: Finding[] = [
     { engine: "trufflehog", ruleId: "AWS", severity: "critical", message: "verified", file: "a.env", line: 1 },
-    { engine: "trufflehog", ruleId: "AWS", severity: "high", message: "unverified", file: "b.env", line: 2 },
+    { engine: "trufflehog", ruleId: "AWS", severity: "critical", message: "verified", file: "b.env", line: 2 },
     {
       engine: "gosec",
       ruleId: "G201",
@@ -84,6 +84,36 @@ test("toSarif adds code scanning rule metadata from the highest severity of a ru
   assert.equal(info.helpUri, undefined);
 });
 
+test("toSarif leaves rule severity and help link to each result when a rule's findings disagree", () => {
+  const findings: Finding[] = [
+    {
+      engine: "trivy",
+      ruleId: "TRIVY-VULN",
+      severity: "critical",
+      message: "pkg a",
+      file: "package-lock.json",
+      line: 1,
+      url: "https://example.test/a",
+    },
+    {
+      engine: "trivy",
+      ruleId: "TRIVY-VULN",
+      severity: "low",
+      message: "pkg b",
+      file: "package-lock.json",
+      line: 1,
+      url: "https://example.test/b",
+    },
+  ];
+
+  const run = JSON.parse(toSarif(findings)).runs[0];
+  const [rule] = run.tool.driver.rules;
+  assert.equal(rule.properties["security-severity"], undefined);
+  assert.equal(rule.defaultConfiguration, undefined);
+  assert.equal(rule.helpUri, undefined);
+  assert.deepEqual(run.results.map((result: { level: string }) => result.level), ["error", "note"]);
+});
+
 test("toSarif records engine versions and engine failures when engine results are given", () => {
   const engines: EngineResult[] = [
     { engine: "bandit", findings: [], status: "success", durationMs: 1200 },
@@ -97,7 +127,7 @@ test("toSarif records engine versions and engine failures when engine results ar
     version: TOOLS.bandit.version,
     properties: { status: "success", findings: 0, durationMs: 1200 },
   });
-  assert.equal(run.invocations[0].executionSuccessful, false);
+  assert.equal(run.invocations[0].executionSuccessful, true);
   assert.deepEqual(
     run.invocations[0].toolExecutionNotifications.map((n: { level: string; descriptor: { id: string } }) => [
       n.descriptor.id,
@@ -108,6 +138,29 @@ test("toSarif records engine versions and engine failures when engine results ar
       ["semgrep", "error"],
     ],
   );
+});
+
+test("toSarif reports pinned versions only for engines that ran successfully", () => {
+  const engines: EngineResult[] = [
+    { engine: "detekt", findings: [], status: "skipped", note: "no Kotlin files" },
+    { engine: "semgrep", findings: [], status: "failed", note: "semgrep not installed" },
+  ];
+  const extensions = JSON.parse(toSarif([], engines)).runs[0].tool.extensions;
+  assert.deepEqual(extensions.map((extension: { version?: string }) => extension.version), [undefined, undefined]);
+});
+
+test("toSarif marks the run unsuccessful only when engines failed and none succeeded", () => {
+  const successful = (engines: EngineResult[]) =>
+    JSON.parse(toSarif([], engines)).runs[0].invocations[0].executionSuccessful;
+  const ok: EngineResult = { engine: "bandit", findings: [], status: "success" };
+  const skipped: EngineResult = { engine: "detekt", findings: [], status: "skipped" };
+  const failed: EngineResult = { engine: "semgrep", findings: [], status: "failed", note: "crashed" };
+
+  assert.equal(successful([ok, failed]), true);
+  assert.equal(successful([ok, skipped]), true);
+  assert.equal(successful([skipped]), true);
+  assert.equal(successful([failed]), false);
+  assert.equal(successful([failed, skipped]), false);
 });
 
 test("toSarif without engine results omits extensions and invocations", () => {

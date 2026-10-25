@@ -85,21 +85,29 @@ jobs:
 
 All report files are written to `output-dir`.
 
+The engine version in the reports is the version pinned in `tools.lock.json`, shown only for engines that ran
+successfully. Some engines (hadolint, gosec, zizmor, gitleaks, betterleaks, trufflehog, trivy) use a binary that is
+already on `PATH` without checking its version, so on runners that preinstall one of these tools the binary that ran
+can differ.
+
 - **Job summary** (`polyscan-summary.md`, also shown on the workflow run page): scanned target, commit and ref, total
   duration and PolyScan version; per engine the status, pinned tool version, duration, findings per severity and any
   note (why it was skipped or failed); secrets and container-image findings in their own tables; the first 50 findings;
   and the Quality Gate as a table of found vs. allowed counts per gated severity.
-- **SARIF** (`polyscan.sarif`): one rule per `engine/ruleId` with `security-severity` (taken from the rule's most
-  severe finding, so Code Scanning shows critical/high/medium/low), `security` and `external/cwe/cwe-N` tags, and a
-  `helpUri` where a documentation link is known. Engine versions and run status are listed under `tool.extensions`,
-  and engine failures or skip reasons under `invocations[0].toolExecutionNotifications`. PolyScan sets no
+- **SARIF** (`polyscan.sarif`): one rule per `engine/ruleId` with `security` and `external/cwe/cwe-N` tags. When all
+  findings of a rule share one severity, the rule also carries `security-severity` and a default level, so Code
+  Scanning shows critical/high/medium/low; when they share one documentation link, it carries that as `helpUri`.
+  Rules whose findings disagree (for example Trivy's fallback `TRIVY-VULN`) get neither, and each alert keeps its own
+  level. Pinned engine versions and run status are listed under `tool.extensions`, and engine failures or skip reasons
+  under `invocations[0].toolExecutionNotifications`. The run is marked `executionSuccessful: false` only when engines
+  failed and none succeeded, so one failing engine does not discard the findings of the others. PolyScan sets no
   `partialFingerprints`: `github/codeql-action/upload-sarif` computes `primaryLocationLineHash` from the source when
   it uploads the file, which is what Code Scanning uses to track alerts across runs. If you upload the SARIF through
   the REST API instead, that hash is missing and alerts may be duplicated.
 - **JSON report** (`polyscan-report.json`, `schemaVersion: 1`): for further processing in scripts and dashboards.
   Contains `tool`, `scan` (target, requested engines, concurrency, start time, duration and the GitHub repository,
   ref, SHA, workflow, job and run URL), `gate` (enforced, passed, thresholds, reasons), `counts`, `engines` (status,
-  version, duration, counts per severity, note) and every normalized `finding` without the 50-row limit.
+  `pinnedVersion`, duration, counts per severity, note) and every normalized `finding` without the 50-row limit.
 
 ## Engines
 

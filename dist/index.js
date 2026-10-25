@@ -91300,7 +91300,7 @@ function toJsonReport(input) {
         engines: engineResults.map((result) => ({
             engine: result.engine,
             status: result.status,
-            version: (0, tool_versions_1.engineVersion)(result.engine),
+            pinnedVersion: (0, tool_versions_1.reportedPinnedVersion)(result),
             durationMs: result.durationMs,
             counts: (0, schema_1.countBySeverity)(result.findings),
             note: result.note,
@@ -91337,8 +91337,6 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.toSarif = toSarif;
-// SARIF 2.1.0 serializer (GitHub Code Scanning compatible).
-const schema_1 = __nccwpck_require__(75060);
 const links_1 = __nccwpck_require__(73346);
 const tool_versions_1 = __nccwpck_require__(88947);
 const package_json_1 = __importDefault(__nccwpck_require__(8330));
@@ -91362,8 +91360,11 @@ const SECURITY_SEVERITY = {
     medium: "5.5",
     low: "2.0",
 };
-function moreSevere(a, b) {
-    return schema_1.SEVERITY_ORDER.indexOf(a) <= schema_1.SEVERITY_ORDER.indexOf(b) ? a : b;
+// A rule-level value is only meaningful when every finding of the rule agrees on it.
+// Fallback IDs such as Trivy's TRIVY-VULN group unrelated findings, and a rule-level
+// security-severity would then override each alert's own severity in Code Scanning.
+function single(values) {
+    return values.size === 1 ? values.values().next().value : undefined;
 }
 function collectRules(findings) {
     // Deduplicate rules by engine/ruleId.
@@ -91372,26 +91373,28 @@ function collectRules(findings) {
         const id = `${f.engine}/${f.ruleId}`;
         let rule = ruleMap.get(id);
         if (!rule) {
-            rule = { id, name: f.ruleId, desc: f.message, severity: f.severity, cwes: new Set() };
+            rule = { id, name: f.ruleId, desc: f.message, severities: new Set(), helpUris: new Set(), cwes: new Set() };
             ruleMap.set(id, rule);
         }
-        rule.severity = moreSevere(rule.severity, f.severity);
-        rule.helpUri ??= (0, links_1.findingUrl)(f);
+        rule.severities.add(f.severity);
+        rule.helpUris.add((0, links_1.findingUrl)(f));
         if (f.cwe)
             rule.cwes.add(f.cwe);
     }
     return ruleMap;
 }
 function sarifRule(rule) {
-    const securitySeverity = SECURITY_SEVERITY[rule.severity];
+    const severity = single(rule.severities);
+    const securitySeverity = severity ? SECURITY_SEVERITY[severity] : undefined;
+    const helpUri = single(rule.helpUris);
     const cweTags = [...rule.cwes].sort().map((cwe) => `external/cwe/${cwe.toLowerCase()}`);
     return {
         id: rule.id,
         name: rule.name,
         shortDescription: { text: `${rule.name}` },
         fullDescription: { text: rule.desc },
-        defaultConfiguration: { level: sarifLevel(rule.severity) },
-        ...(rule.helpUri ? { helpUri: rule.helpUri } : {}),
+        ...(severity ? { defaultConfiguration: { level: sarifLevel(severity) } } : {}),
+        ...(helpUri ? { helpUri } : {}),
         properties: {
             tags: ["security", rule.id.split("/", 1)[0], ...cweTags],
             ...(securitySeverity ? { "security-severity": securitySeverity } : {}),
@@ -91400,7 +91403,7 @@ function sarifRule(rule) {
 }
 function engineExtensions(engineResults) {
     return engineResults.map((result) => {
-        const version = (0, tool_versions_1.engineVersion)(result.engine);
+        const version = (0, tool_versions_1.reportedPinnedVersion)(result);
         return {
             name: result.engine,
             ...(version ? { version } : {}),
@@ -91420,8 +91423,13 @@ function invocation(engineResults) {
         message: { text: `${result.engine} (${result.status}): ${result.note}` },
         descriptor: { id: result.engine },
     }));
+    // One failed engine must not mark the merged run unsuccessful: Code Scanning would
+    // then discard the findings of every engine that did complete. The run only failed
+    // when engines failed and none succeeded.
+    const anyFailed = engineResults.some((result) => result.status === "failed");
+    const anySucceeded = engineResults.some((result) => result.status === "success");
     return {
-        executionSuccessful: engineResults.every((result) => result.status !== "failed"),
+        executionSuccessful: !anyFailed || anySucceeded,
         ...(notifications.length > 0 ? { toolExecutionNotifications: notifications } : {}),
     };
 }
@@ -91874,10 +91882,11 @@ function engineIcon(result) {
 }
 function formatDuration(ms) {
     const seconds = ms / 1000;
-    if (seconds < 60)
+    if (seconds < 59.95)
         return `${seconds.toFixed(1)}s`;
-    const minutes = Math.floor(seconds / 60);
-    return `${minutes}m ${Math.round(seconds - minutes * 60)}s`;
+    // Round before splitting so 119.6s carries into the minutes ("2m 0s", not "1m 60s").
+    const total = Math.round(seconds);
+    return `${Math.floor(total / 60)}m ${total % 60}s`;
 }
 // A zero count renders as "·" so the non-zero cells stand out in wide tables.
 function countCell(count) {
@@ -91887,12 +91896,12 @@ function engineSection(results) {
     const lines = [
         "### Engines",
         "",
-        `| Engine | Status | Version | Duration | ${schema_1.SEVERITY_ORDER.map((sev) => SEV_EMOJI[sev]).join(" | ")} | Note |`,
+        `| Engine | Status | Pinned version | Duration | ${schema_1.SEVERITY_ORDER.map((sev) => SEV_EMOJI[sev]).join(" | ")} | Note |`,
         `|---|---|---|---|${schema_1.SEVERITY_ORDER.map(() => "---:").join("|")}|---|`,
     ];
     for (const result of results) {
         const counts = (0, schema_1.countBySeverity)(result.findings);
-        const version = (0, tool_versions_1.engineVersion)(result.engine);
+        const version = (0, tool_versions_1.reportedPinnedVersion)(result);
         const duration = result.durationMs === undefined ? "–" : formatDuration(result.durationMs);
         lines.push(`| **${tableCell(result.engine)}** | ${engineIcon(result)} ${result.status} | ` +
             `${version ? code(version) : "–"} | ${duration} | ` +
@@ -92182,6 +92191,7 @@ exports.TOOLS = exports.TOOL_LOCK_SCHEMA_VERSION = void 0;
 exports.githubReleaseUrl = githubReleaseUrl;
 exports.mavenArtifactUrl = mavenArtifactUrl;
 exports.engineVersion = engineVersion;
+exports.reportedPinnedVersion = reportedPinnedVersion;
 const tools_lock_json_1 = __importDefault(__nccwpck_require__(81070));
 exports.TOOL_LOCK_SCHEMA_VERSION = tools_lock_json_1.default.schemaVersion;
 exports.TOOLS = tools_lock_json_1.default.tools;
@@ -92205,6 +92215,12 @@ function engineVersion(engine) {
         return `${exports.TOOLS.spotbugs.version} + findsecbugs ${exports.TOOLS.findsecbugs.version}`;
     }
     return exports.TOOLS[engine]?.version;
+}
+// The lock file records what PolyScan installs, not necessarily what ran: several
+// engines use a binary already on PATH. Reports therefore label it the pinned
+// version, and leave it out for engines that were skipped or failed.
+function reportedPinnedVersion(result) {
+    return result.status === "success" ? engineVersion(result.engine) : undefined;
 }
 
 

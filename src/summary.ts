@@ -4,7 +4,7 @@ import { GateResult } from "./gate";
 import { EngineName } from "./engines";
 import { findingUrl } from "./links";
 import { ScanContext } from "./report";
-import { engineVersion } from "./tool-versions";
+import { reportedPinnedVersion } from "./tool-versions";
 import pkg from "../package.json";
 
 const SEV_EMOJI: Record<Severity, string> = {
@@ -65,9 +65,10 @@ function engineIcon(result: EngineResult): string {
 
 export function formatDuration(ms: number): string {
   const seconds = ms / 1000;
-  if (seconds < 60) return `${seconds.toFixed(1)}s`;
-  const minutes = Math.floor(seconds / 60);
-  return `${minutes}m ${Math.round(seconds - minutes * 60)}s`;
+  if (seconds < 59.95) return `${seconds.toFixed(1)}s`;
+  // Round before splitting so 119.6s carries into the minutes ("2m 0s", not "1m 60s").
+  const total = Math.round(seconds);
+  return `${Math.floor(total / 60)}m ${total % 60}s`;
 }
 
 // A zero count renders as "·" so the non-zero cells stand out in wide tables.
@@ -79,12 +80,12 @@ function engineSection(results: EngineResult[]): string[] {
   const lines = [
     "### Engines",
     "",
-    `| Engine | Status | Version | Duration | ${SEVERITY_ORDER.map((sev) => SEV_EMOJI[sev]).join(" | ")} | Note |`,
+    `| Engine | Status | Pinned version | Duration | ${SEVERITY_ORDER.map((sev) => SEV_EMOJI[sev]).join(" | ")} | Note |`,
     `|---|---|---|---|${SEVERITY_ORDER.map(() => "---:").join("|")}|---|`,
   ];
   for (const result of results) {
     const counts = countBySeverity(result.findings);
-    const version = engineVersion(result.engine);
+    const version = reportedPinnedVersion(result);
     const duration = result.durationMs === undefined ? "–" : formatDuration(result.durationMs);
     lines.push(
       `| **${tableCell(result.engine)}** | ${engineIcon(result)} ${result.status} | ` +

@@ -1,4 +1,5 @@
 import manifest from "../tools.lock.json";
+import { EngineResult } from "./schema";
 
 export const TOOL_LOCK_SCHEMA_VERSION = manifest.schemaVersion;
 export const TOOLS = manifest.tools;
@@ -41,4 +42,11 @@ export function engineVersion(engine: string): string | undefined {
     return `${TOOLS.spotbugs.version} + findsecbugs ${TOOLS.findsecbugs.version}`;
   }
   return (TOOLS as Record<string, { version: string } | undefined>)[engine]?.version;
+}
+
+// The lock file records what PolyScan installs, not necessarily what ran: several
+// engines use a binary already on PATH. Reports therefore label it the pinned
+// version, and leave it out for engines that were skipped or failed.
+export function reportedPinnedVersion(result: EngineResult): string | undefined {
+  return result.status === "success" ? engineVersion(result.engine) : undefined;
 }

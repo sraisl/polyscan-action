@@ -1,7 +1,7 @@
 // Scan context shared by all reports, and the machine-readable JSON report.
 import { EngineResult, Finding, SeverityCounts, countBySeverity } from "./schema";
 import { GateResult } from "./gate";
-import { engineVersion } from "./tool-versions";
+import { reportedPinnedVersion } from "./tool-versions";
 import pkg from "../package.json";
 
 export const JSON_REPORT_SCHEMA_VERSION = 1;
@@ -67,7 +67,7 @@ export function toJsonReport(input: JsonReportInput): string {
     engines: engineResults.map((result) => ({
       engine: result.engine,
       status: result.status,
-      version: engineVersion(result.engine),
+      pinnedVersion: reportedPinnedVersion(result),
       durationMs: result.durationMs,
       counts: countBySeverity(result.findings),
       note: result.note,

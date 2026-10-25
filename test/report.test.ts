@@ -72,11 +72,12 @@ test("toJsonReport contains scan context, gate thresholds, per-engine counts and
   assert.deepEqual(report.engines[0], {
     engine: "bandit",
     status: "success",
-    version: TOOLS.bandit.version,
+    pinnedVersion: TOOLS.bandit.version,
     durationMs: 1500,
     counts: { critical: 0, high: 1, medium: 0, low: 1, info: 0, total: 2 },
   });
   assert.equal(report.engines[1].note, "no Kotlin files");
+  assert.equal(report.engines[1].pinnedVersion, undefined);
   assert.deepEqual(report.findings, findings);
 });
 

@@ -1,7 +1,7 @@
 // SARIF 2.1.0 serializer (GitHub Code Scanning compatible).
-import { EngineResult, Finding, SEVERITY_ORDER, Severity } from "./schema";
+import { EngineResult, Finding, Severity } from "./schema";
 import { findingUrl } from "./links";
-import { engineVersion } from "./tool-versions";
+import { reportedPinnedVersion } from "./tool-versions";
 import pkg from "../package.json";
 
 function sarifLevel(sev: Severity): string {
@@ -30,13 +30,16 @@ interface RuleSummary {
   id: string;
   name: string;
   desc: string;
-  severity: Severity; // highest severity among the rule's findings
-  helpUri?: string;
+  severities: Set<Severity>;
+  helpUris: Set<string | undefined>;
   cwes: Set<string>;
 }
 
-function moreSevere(a: Severity, b: Severity): Severity {
-  return SEVERITY_ORDER.indexOf(a) <= SEVERITY_ORDER.indexOf(b) ? a : b;
+// A rule-level value is only meaningful when every finding of the rule agrees on it.
+// Fallback IDs such as Trivy's TRIVY-VULN group unrelated findings, and a rule-level
+// security-severity would then override each alert's own severity in Code Scanning.
+function single<T>(values: Set<T>): T | undefined {
+  return values.size === 1 ? values.values().next().value : undefined;
 }
 
 function collectRules(findings: Finding[]): Map<string, RuleSummary> {
@@ -46,26 +49,28 @@ function collectRules(findings: Finding[]): Map<string, RuleSummary> {
     const id = `${f.engine}/${f.ruleId}`;
     let rule = ruleMap.get(id);
     if (!rule) {
-      rule = { id, name: f.ruleId, desc: f.message, severity: f.severity, cwes: new Set() };
+      rule = { id, name: f.ruleId, desc: f.message, severities: new Set(), helpUris: new Set(), cwes: new Set() };
       ruleMap.set(id, rule);
     }
-    rule.severity = moreSevere(rule.severity, f.severity);
-    rule.helpUri ??= findingUrl(f);
+    rule.severities.add(f.severity);
+    rule.helpUris.add(findingUrl(f));
     if (f.cwe) rule.cwes.add(f.cwe);
   }
   return ruleMap;
 }
 
 function sarifRule(rule: RuleSummary) {
-  const securitySeverity = SECURITY_SEVERITY[rule.severity];
+  const severity = single(rule.severities);
+  const securitySeverity = severity ? SECURITY_SEVERITY[severity] : undefined;
+  const helpUri = single(rule.helpUris);
   const cweTags = [...rule.cwes].sort().map((cwe) => `external/cwe/${cwe.toLowerCase()}`);
   return {
     id: rule.id,
     name: rule.name,
     shortDescription: { text: `${rule.name}` },
     fullDescription: { text: rule.desc },
-    defaultConfiguration: { level: sarifLevel(rule.severity) },
-    ...(rule.helpUri ? { helpUri: rule.helpUri } : {}),
+    ...(severity ? { defaultConfiguration: { level: sarifLevel(severity) } } : {}),
+    ...(helpUri ? { helpUri } : {}),
     properties: {
       tags: ["security", rule.id.split("/", 1)[0], ...cweTags],
       ...(securitySeverity ? { "security-severity": securitySeverity } : {}),
@@ -75,7 +80,7 @@ function sarifRule(rule: RuleSummary) {
 
 function engineExtensions(engineResults: EngineResult[]) {
   return engineResults.map((result) => {
-    const version = engineVersion(result.engine);
+    const version = reportedPinnedVersion(result);
     return {
       name: result.engine,
       ...(version ? { version } : {}),
@@ -96,8 +101,13 @@ function invocation(engineResults: EngineResult[]) {
       message: { text: `${result.engine} (${result.status}): ${result.note}` },
       descriptor: { id: result.engine },
     }));
+  // One failed engine must not mark the merged run unsuccessful: Code Scanning would
+  // then discard the findings of every engine that did complete. The run only failed
+  // when engines failed and none succeeded.
+  const anyFailed = engineResults.some((result) => result.status === "failed");
+  const anySucceeded = engineResults.some((result) => result.status === "success");
   return {
-    executionSuccessful: engineResults.every((result) => result.status !== "failed"),
+    executionSuccessful: !anyFailed || anySucceeded,
     ...(notifications.length > 0 ? { toolExecutionNotifications: notifications } : {}),
   };
 }
