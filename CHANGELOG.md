@@ -13,12 +13,14 @@ tags and must not be reused or moved.
 
 ## [Unreleased]
 
+## [v17.2.0] - 2026-10-25
+
 ### Added
 
 - New JSON report `polyscan-report.json` (input `json-report`, default `true`; output `json-file`) with the scan
-  context, Quality Gate thresholds and result, per-engine status, pinned tool version (`pinnedVersion`, only for engines that ran successfully), duration and
-  severity counts, and all
-  findings. It is included in the uploaded artifact.
+  context, Quality Gate thresholds and result, per-engine status, pinned tool version (`pinnedVersion`, only for
+  engines that ran successfully), duration and severity counts, and all findings. It is included in the uploaded
+  artifact.
 - The job summary shows the scanned target, commit, total duration and PolyScan version. The engine list is now a
   table with each engine's pinned tool version, duration and findings per severity. The Quality Gate section lists
   found vs. allowed counts per gated severity.
