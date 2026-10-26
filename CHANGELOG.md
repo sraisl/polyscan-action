@@ -13,6 +13,8 @@ tags and must not be reused or moved.
 
 ## [Unreleased]
 
+## [v17.2.1] - 2026-10-26
+
 ### Changed
 
 - hadolint, gosec, zizmor, gitleaks, betterleaks, trufflehog and trivy reuse a binary already on `PATH` only when it
