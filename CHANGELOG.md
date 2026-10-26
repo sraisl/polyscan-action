@@ -13,6 +13,14 @@ tags and must not be reused or moved.
 
 ## [Unreleased]
 
+### Changed
+
+- hadolint, gosec, zizmor, gitleaks, betterleaks, trufflehog and trivy reuse a binary already on `PATH` only when it
+  reports the version pinned in `tools.lock.json`, as oxlint, OpenGrep, Semgrep and Bandit already did. A different
+  version is ignored with the warning `Ignoring <tool> from PATH because it is not the pinned version <version>`,
+  and the pinned release is downloaded and verified instead. Scan results no longer depend on a scanner preinstalled
+  on the runner image, and the pinned version shown in the reports is the one that ran.
+
 ## [v17.2.0] - 2026-10-25
 
 ### Added

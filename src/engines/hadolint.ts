@@ -4,7 +4,7 @@ import * as core from "@actions/core";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { Finding, EngineResult, Severity } from "../schema";
-import { run, which } from "../exec";
+import { findPinnedOnPath, run } from "../exec";
 import { resolveTarget } from "../target";
 import { cachedTool, downloadVerified } from "../tools";
 import { githubReleaseUrl, TOOLS } from "../tool-versions";
@@ -79,8 +79,9 @@ export function parseHadolintSarif(sarif: unknown, abs: string): Finding[] {
 }
 
 async function ensureHadolint(): Promise<string | null> {
-  if (await which("hadolint")) return "hadolint";
-  core.info(`hadolint not found — downloading v${HADOLINT.version}…`);
+  const pinned = await findPinnedOnPath("hadolint", HADOLINT.version, ["--version"], core);
+  if (pinned) return pinned;
+  core.info(`hadolint v${HADOLINT.version} not found on PATH — downloading…`);
   try {
     return await cachedTool("hadolint", HADOLINT.version, "hadolint", async (directory) => {
       const downloaded = await downloadVerified(githubReleaseUrl(HADOLINT), HADOLINT.sha256);
