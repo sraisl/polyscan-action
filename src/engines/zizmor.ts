@@ -6,7 +6,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as tc from "@actions/tool-cache";
 import { Finding, EngineResult, Severity } from "../schema";
-import { run, which } from "../exec";
+import { findPinnedOnPath, run } from "../exec";
 import { resolveTarget } from "../target";
 import { cachedTool, downloadVerified } from "../tools";
 import { githubReleaseUrl, TOOLS } from "../tool-versions";
@@ -73,8 +73,9 @@ export function parseZizmorSarif(sarif: unknown, abs: string): Finding[] {
 }
 
 async function ensureZizmor(): Promise<string | null> {
-  if (await which("zizmor")) return "zizmor";
-  core.info(`zizmor not found - downloading v${ZIZMOR.version}...`);
+  const pinned = await findPinnedOnPath("zizmor", ZIZMOR.version, ["--version"], core);
+  if (pinned) return pinned;
+  core.info(`zizmor v${ZIZMOR.version} not found on PATH - downloading...`);
   try {
     return await cachedTool("zizmor", ZIZMOR.version, "zizmor", async (directory) => {
       const archive = await downloadVerified(githubReleaseUrl(ZIZMOR), ZIZMOR.sha256);

@@ -88438,9 +88438,10 @@ async function runBetterleaks(target) {
     }
 }
 async function ensureBetterleaks() {
-    if (await (0, exec_1.which)("betterleaks"))
-        return "betterleaks";
-    core.info(`betterleaks not found — downloading v${BETTERLEAKS.version}…`);
+    const pinned = await (0, exec_1.findPinnedOnPath)("betterleaks", BETTERLEAKS.version, ["version"], core);
+    if (pinned)
+        return pinned;
+    core.info(`betterleaks v${BETTERLEAKS.version} not found on PATH — downloading…`);
     try {
         return await (0, tools_1.cachedTool)("betterleaks", BETTERLEAKS.version, "betterleaks", async (directory) => {
             const archive = await (0, tools_1.downloadVerified)((0, tool_versions_1.githubReleaseUrl)(BETTERLEAKS), BETTERLEAKS.sha256);
@@ -88904,9 +88905,10 @@ async function runGitleaks(target) {
     }
 }
 async function ensureGitleaks() {
-    if (await (0, exec_1.which)("gitleaks"))
-        return "gitleaks";
-    core.info(`gitleaks not found — downloading v${GITLEAKS_VERSION}…`);
+    const pinned = await (0, exec_1.findPinnedOnPath)("gitleaks", GITLEAKS_VERSION, ["version"], core);
+    if (pinned)
+        return pinned;
+    core.info(`gitleaks v${GITLEAKS_VERSION} not found on PATH — downloading…`);
     try {
         return await (0, tools_1.cachedTool)("gitleaks", GITLEAKS_VERSION, "gitleaks", async (directory) => {
             const archive = await (0, tools_1.downloadVerified)((0, tool_versions_1.githubReleaseUrl)(GITLEAKS), GITLEAKS_SHA256);
@@ -89059,9 +89061,10 @@ function findGoScanRoots(root) {
     return hasGoFiles ? [root] : [];
 }
 async function ensureGosec() {
-    if (await (0, exec_1.which)("gosec"))
-        return "gosec";
-    core.info(`gosec not found - downloading v${GOSEC.version}...`);
+    const pinned = await (0, exec_1.findPinnedOnPath)("gosec", GOSEC.version, ["-version"], core);
+    if (pinned)
+        return pinned;
+    core.info(`gosec v${GOSEC.version} not found on PATH - downloading...`);
     try {
         return await (0, tools_1.cachedTool)("gosec", GOSEC.version, "gosec", async (directory) => {
             const archive = await (0, tools_1.downloadVerified)((0, tool_versions_1.githubReleaseUrl)(GOSEC), GOSEC.sha256);
@@ -89228,9 +89231,10 @@ function parseHadolintSarif(sarif, abs) {
     return findings;
 }
 async function ensureHadolint() {
-    if (await (0, exec_1.which)("hadolint"))
-        return "hadolint";
-    core.info(`hadolint not found — downloading v${HADOLINT.version}…`);
+    const pinned = await (0, exec_1.findPinnedOnPath)("hadolint", HADOLINT.version, ["--version"], core);
+    if (pinned)
+        return pinned;
+    core.info(`hadolint v${HADOLINT.version} not found on PATH — downloading…`);
     try {
         return await (0, tools_1.cachedTool)("hadolint", HADOLINT.version, "hadolint", async (directory) => {
             const downloaded = await (0, tools_1.downloadVerified)((0, tool_versions_1.githubReleaseUrl)(HADOLINT), HADOLINT.sha256);
@@ -90250,9 +90254,10 @@ function mapSeverity(s) {
     }
 }
 async function ensureTrivy() {
-    if (await (0, exec_1.which)("trivy"))
-        return "trivy";
-    core.info(`trivy not found — downloading v${TRIVY_VERSION}…`);
+    const pinned = await (0, exec_1.findPinnedOnPath)("trivy", TRIVY_VERSION, ["--version"], core);
+    if (pinned)
+        return pinned;
+    core.info(`trivy v${TRIVY_VERSION} not found on PATH — downloading…`);
     try {
         return await (0, tools_1.cachedTool)("trivy", TRIVY_VERSION, "trivy", async (directory) => {
             const archive = await (0, tools_1.downloadVerified)((0, tool_versions_1.githubReleaseUrl)(TRIVY), TRIVY_SHA256);
@@ -90459,9 +90464,10 @@ function parseTrufflehogSarif(sarif, abs) {
     return findings;
 }
 async function ensureTrufflehog() {
-    if (await (0, exec_1.which)("trufflehog"))
-        return "trufflehog";
-    core.info(`trufflehog not found - downloading v${TRUFFLEHOG.version}...`);
+    const pinned = await (0, exec_1.findPinnedOnPath)("trufflehog", TRUFFLEHOG.version, ["--version"], core);
+    if (pinned)
+        return pinned;
+    core.info(`trufflehog v${TRUFFLEHOG.version} not found on PATH - downloading...`);
     try {
         return await (0, tools_1.cachedTool)("trufflehog", TRUFFLEHOG.version, "trufflehog", async (directory) => {
             const archive = await (0, tools_1.downloadVerified)((0, tool_versions_1.githubReleaseUrl)(TRUFFLEHOG), TRUFFLEHOG.sha256);
@@ -90613,9 +90619,10 @@ function parseZizmorSarif(sarif, abs) {
     return findings;
 }
 async function ensureZizmor() {
-    if (await (0, exec_1.which)("zizmor"))
-        return "zizmor";
-    core.info(`zizmor not found - downloading v${ZIZMOR.version}...`);
+    const pinned = await (0, exec_1.findPinnedOnPath)("zizmor", ZIZMOR.version, ["--version"], core);
+    if (pinned)
+        return pinned;
+    core.info(`zizmor v${ZIZMOR.version} not found on PATH - downloading...`);
     try {
         return await (0, tools_1.cachedTool)("zizmor", ZIZMOR.version, "zizmor", async (directory) => {
             const archive = await (0, tools_1.downloadVerified)((0, tool_versions_1.githubReleaseUrl)(ZIZMOR), ZIZMOR.sha256);
@@ -90707,6 +90714,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.run = run;
 exports.resolveExecutable = resolveExecutable;
 exports.resolvePinnedExecutable = resolvePinnedExecutable;
+exports.findPinnedOnPath = findPinnedOnPath;
 exports.which = which;
 exports.ensurePythonTool = ensurePythonTool;
 // Shared helper to run an external command and capture stdout/stderr,
@@ -90800,12 +90808,25 @@ async function resolvePinnedExecutable(tool, expectedVersion, versionArgs = ["--
     if (result.exitCode !== 0)
         return null;
     // Tools report the version either bare ("1.180.0") or prefixed with their own
-    // name ("bandit 1.9.4") or oxlint's "Version: 1.89.0" label. Allow at most one leading token on the first
-    // line so a version number printed elsewhere in a banner cannot pass for the
-    // pinned release.
+    // name ("bandit 1.9.4"), a "Version: 1.89.0" label (oxlint, trivy, gosec) or
+    // hadolint's "Haskell Dockerfile Linter 2.15.1". Allow at most one leading token
+    // or one of these labels on the first line so a version number printed elsewhere
+    // in a banner cannot pass for the pinned release.
     const firstLine = result.stdout.trim().split(/\r?\n/, 1)[0] ?? "";
-    const match = /^(?:(?:[A-Za-z][\w.+-]*|Version:)\s+)?v?(\d+(?:\.\d+)+)(?:\s|$)/.exec(firstLine);
+    const match = /^(?:(?:[A-Za-z][\w.+-]*|Version:|Haskell Dockerfile Linter)\s+)?v?(\d+(?:\.\d+)+)(?:\s|$)/.exec(firstLine);
     return match?.[1] === expectedVersion ? executable : null;
+}
+// A binary already on PATH is reused only when it reports the version pinned in
+// tools.lock.json, so a runner image's own copy cannot change scan results or
+// make the reported pinned version wrong. Otherwise the caller installs the
+// pinned release.
+async function findPinnedOnPath(tool, version, versionArgs, core) {
+    if (!resolveExecutable(tool))
+        return null;
+    const pinned = await resolvePinnedExecutable(tool, version, versionArgs);
+    if (!pinned)
+        core.warning(`Ignoring ${tool} from PATH because it is not the pinned version ${version}`);
+    return pinned;
 }
 // Check whether a binary is available to direct child processes.
 async function which(tool) {

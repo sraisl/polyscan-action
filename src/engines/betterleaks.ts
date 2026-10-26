@@ -17,7 +17,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import * as tc from "@actions/tool-cache";
 import { Finding, EngineResult, Severity } from "../schema";
-import { run, which } from "../exec";
+import { findPinnedOnPath, run } from "../exec";
 import { resolveTarget } from "../target";
 import { cachedTool, downloadVerified } from "../tools";
 import { githubReleaseUrl, TOOLS } from "../tool-versions";
@@ -120,8 +120,9 @@ export async function runBetterleaks(target: string): Promise<EngineResult> {
 }
 
 async function ensureBetterleaks(): Promise<string | null> {
-  if (await which("betterleaks")) return "betterleaks";
-  core.info(`betterleaks not found — downloading v${BETTERLEAKS.version}…`);
+  const pinned = await findPinnedOnPath("betterleaks", BETTERLEAKS.version, ["version"], core);
+  if (pinned) return pinned;
+  core.info(`betterleaks v${BETTERLEAKS.version} not found on PATH — downloading…`);
   try {
     return await cachedTool("betterleaks", BETTERLEAKS.version, "betterleaks", async (directory) => {
       const archive = await downloadVerified(githubReleaseUrl(BETTERLEAKS), BETTERLEAKS.sha256);

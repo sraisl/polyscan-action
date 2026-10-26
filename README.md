@@ -86,9 +86,8 @@ jobs:
 All report files are written to `output-dir`.
 
 The engine version in the reports is the version pinned in `tools.lock.json`, shown only for engines that ran
-successfully. Some engines (hadolint, gosec, zizmor, gitleaks, betterleaks, trufflehog, trivy) use a binary that is
-already on `PATH` without checking its version, so on runners that preinstall one of these tools the binary that ran
-can differ.
+successfully. PolyScan reuses a scanner already on `PATH` only when it reports exactly that version, so the pinned
+version is also the one that ran.
 
 - **Job summary** (`polyscan-summary.md`, also shown on the workflow run page): scanned target, commit and ref, total
   duration and PolyScan version; per engine the status, pinned tool version, duration, findings per severity and any
@@ -128,7 +127,7 @@ can differ.
 | **zizmor** | GitHub Actions workflows | Workflow security (dangerous triggers, template-injection, unpinned actions, excessive permissions, credential persistence); standalone Linux x64 binary; runs `--offline`; SARIF parsed natively |
 | **trufflehog** | any file | opt-in; secret detection with **live verification** — confirms a found credential actually works against its own provider API (AWS, GitHub, Slack, ...) instead of only pattern-matching; verified secrets are reported as `critical`, unverified as `high` |
 
-Python engines are installed into isolated, version-pinned environments. OpenGrep does not require Python: PolyScan uses the exact pinned executable from `PATH` when available, otherwise it downloads and caches a SHA-256-verified standalone binary. Other downloaded tools are also cached and verified with SHA-256. SpotBugs is **build-aware** — for real Java/Kotlin projects it invokes the project's own build (Maven/Gradle) so the full dependency classpath is available, which is required to detect data-flow bugs (SQLi, command injection) on **Java** (FindSecBugs does not target Kotlin bytecode). For **Kotlin** code-security use **detekt**, which analyzes Kotlin source natively. gosec is downloaded only when Go files are present and requires the Go toolchain available on the runner. Trivy runs `--offline-scan` to avoid Maven Central rate limits.
+Python engines are installed into isolated, version-pinned environments. OpenGrep does not require Python: PolyScan uses the exact pinned executable from `PATH` when available, otherwise it downloads and caches a SHA-256-verified standalone binary. The same applies to every other downloaded tool (oxlint, trivy, gitleaks, betterleaks, gosec, hadolint, zizmor, trufflehog): a binary on `PATH` is used only when it reports the version pinned in `tools.lock.json`; otherwise PolyScan installs the pinned release, cached and verified with SHA-256. SpotBugs is **build-aware** — for real Java/Kotlin projects it invokes the project's own build (Maven/Gradle) so the full dependency classpath is available, which is required to detect data-flow bugs (SQLi, command injection) on **Java** (FindSecBugs does not target Kotlin bytecode). For **Kotlin** code-security use **detekt**, which analyzes Kotlin source natively. gosec is downloaded only when Go files are present and requires the Go toolchain available on the runner. Trivy runs `--offline-scan` to avoid Maven Central rate limits.
 
 **Default: `engines: "all"` expands to** `semgrep,bandit,oxlint,spotbugs,trivy,detekt,gitleaks,betterleaks,gosec,hadolint,zizmor`. Each language-specific engine (oxlint, gosec, detekt, hadolint, zizmor, …) runs a quick file-presence check and is skipped with no findings and no download when its file type isn't present, so `all` stays cheap on repositories that don't use that language. OpenGrep, ESLint and trufflehog are explicit opt-ins and can be selected with `engines: "opengrep,trufflehog"` or combined with other engines.
 
