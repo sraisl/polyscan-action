@@ -111,12 +111,30 @@ export async function resolvePinnedExecutable(
   const result = await run(executable, versionArgs);
   if (result.exitCode !== 0) return null;
   // Tools report the version either bare ("1.180.0") or prefixed with their own
-  // name ("bandit 1.9.4") or oxlint's "Version: 1.89.0" label. Allow at most one leading token on the first
-  // line so a version number printed elsewhere in a banner cannot pass for the
-  // pinned release.
+  // name ("bandit 1.9.4"), a "Version: 1.89.0" label (oxlint, trivy, gosec) or
+  // hadolint's "Haskell Dockerfile Linter 2.15.1". Allow at most one leading token
+  // or one of these labels on the first line so a version number printed elsewhere
+  // in a banner cannot pass for the pinned release.
   const firstLine = result.stdout.trim().split(/\r?\n/, 1)[0] ?? "";
-  const match = /^(?:(?:[A-Za-z][\w.+-]*|Version:)\s+)?v?(\d+(?:\.\d+)+)(?:\s|$)/.exec(firstLine);
+  const match =
+    /^(?:(?:[A-Za-z][\w.+-]*|Version:|Haskell Dockerfile Linter)\s+)?v?(\d+(?:\.\d+)+)(?:\s|$)/.exec(firstLine);
   return match?.[1] === expectedVersion ? executable : null;
+}
+
+// A binary already on PATH is reused only when it reports the version pinned in
+// tools.lock.json, so a runner image's own copy cannot change scan results or
+// make the reported pinned version wrong. Otherwise the caller installs the
+// pinned release.
+export async function findPinnedOnPath(
+  tool: string,
+  version: string,
+  versionArgs: string[],
+  core: { warning: (s: string) => void },
+): Promise<string | null> {
+  if (!resolveExecutable(tool)) return null;
+  const pinned = await resolvePinnedExecutable(tool, version, versionArgs);
+  if (!pinned) core.warning(`Ignoring ${tool} from PATH because it is not the pinned version ${version}`);
+  return pinned;
 }
 
 // Check whether a binary is available to direct child processes.

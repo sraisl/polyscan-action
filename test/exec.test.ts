@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { ensurePythonTool, resolveExecutable, resolvePinnedExecutable, run } from "../src/exec";
+import { ensurePythonTool, findPinnedOnPath, resolveExecutable, resolvePinnedExecutable, run } from "../src/exec";
 
 function recordingCore() {
   const info: string[] = [];
@@ -233,4 +233,66 @@ test("run captures output and exit codes and reports missing executables", async
   const missing = await run(path.join(os.tmpdir(), "polyscan-missing-binary"), []);
   assert.equal(missing.exitCode, 127);
   assert.match(missing.stderr, /ENOENT/);
+});
+
+// Version lines as the pinned releases print them (taken from each tool's source):
+// hadolint Hadolint.Meta.getVersion, gosec's -version, gitleaks/betterleaks' version
+// subcommand, trufflehog's kingpin --version, zizmor's clap --version, trivy's VersionInfo.
+const PATH_TOOL_VERSION_OUTPUTS: [tool: string, args: string[], output: string, version: string][] = [
+  ["hadolint", ["--version"], "Haskell Dockerfile Linter 2.15.1", "2.15.1"],
+  ["gosec", ["-version"], "Version: 2.29.0\\nGit tag: v2.29.0\\nBuild date: 2026-10-01", "2.29.0"],
+  ["zizmor", ["--version"], "zizmor 1.30.1", "1.30.1"],
+  ["gitleaks", ["version"], "8.30.1", "8.30.1"],
+  ["betterleaks", ["version"], "1.9.0", "1.9.0"],
+  ["trufflehog", ["--version"], "trufflehog 3.97.9", "3.97.9"],
+  ["trivy", ["--version"], "Version: 0.75.0\\nVulnerability DB:", "0.75.0"],
+];
+
+function withFakeTool(tool: string, output: string, run: (directory: string, executable: string) => Promise<void>) {
+  return async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "polyscan-path-tool-"));
+    const executable = path.join(directory, tool);
+    const previousPath = process.env.PATH;
+    try {
+      fs.writeFileSync(executable, `#!/bin/sh\nprintf '${output}\\n'\n`);
+      fs.chmodSync(executable, 0o755);
+      process.env.PATH = `${directory}${path.delimiter}${previousPath ?? ""}`;
+      await run(directory, executable);
+    } finally {
+      process.env.PATH = previousPath;
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  };
+}
+
+for (const [tool, args, output, version] of PATH_TOOL_VERSION_OUTPUTS) {
+  test(
+    `findPinnedOnPath reuses ${tool} from PATH when it reports the pinned version`,
+    withFakeTool(tool, output, async (_directory, executable) => {
+      const core = recordingCore();
+      assert.equal(await findPinnedOnPath(tool, version, args, core), executable);
+      assert.deepEqual(core.messages.warning, []);
+    }),
+  );
+}
+
+test(
+  "findPinnedOnPath ignores a PATH binary with a different version and warns",
+  withFakeTool("trivy", "Version: 0.50.0", async () => {
+    const core = recordingCore();
+    assert.equal(await findPinnedOnPath("trivy", "0.75.0", ["--version"], core), null);
+    assert.deepEqual(core.messages.warning, ["Ignoring trivy from PATH because it is not the pinned version 0.75.0"]);
+  }),
+);
+
+test("findPinnedOnPath returns null without a warning when the tool is not on PATH", async () => {
+  const core = recordingCore();
+  assert.equal(await findPinnedOnPath("polyscan-missing-tool", "1.0.0", ["--version"], core), null);
+  assert.deepEqual(core.messages.warning, []);
+});
+
+test("resolvePinnedExecutable does not accept hadolint's label with extra words before the version", async () => {
+  await withFakeTool("hadolint", "Haskell Dockerfile Linter build 2.15.1", async (directory) => {
+    assert.equal(await resolvePinnedExecutable("hadolint", "2.15.1", ["--version"], directory), null);
+  })();
 });
