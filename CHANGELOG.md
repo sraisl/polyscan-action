@@ -13,6 +13,13 @@ tags and must not be reused or moved.
 
 ## [Unreleased]
 
+## [v17.2.2] - 2026-10-28
+
+### Changed
+
+- Updated the pinned scan engine versions in `tools.lock.json`: ESLint 10.13.0, gosec 2.30.0, Kotlin compiler 2.4.21,
+  OpenGrep 1.32.0, Semgrep 1.182.1, SpotBugs 4.10.5, Trivy 0.76.1, TruffleHog 3.99.7 and zizmor 1.31.1.
+
 ## [v17.2.1] - 2026-10-26
 
 ### Changed

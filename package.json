@@ -1,6 +1,6 @@
 {
   "name": "polyscan-action",
-  "version": "17.2.1",
+  "version": "17.2.2",
   "description": "Multi-language SAST orchestrator as a native TypeScript GitHub Action with Quality Gate, SARIF, CycloneDX SBOM and job summary",
   "main": "dist/index.js",
   "engines": {
