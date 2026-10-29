@@ -13,6 +13,8 @@ tags and must not be reused or moved.
 
 ## [Unreleased]
 
+## [v17.3.0] - 2026-10-29
+
 ### Added
 
 - `reviewdog` input (default `false`): reports findings via [reviewdog](https://github.com/reviewdog/reviewdog)
