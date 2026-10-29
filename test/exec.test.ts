@@ -296,3 +296,9 @@ test("resolvePinnedExecutable does not accept hadolint's label with extra words 
     assert.equal(await resolvePinnedExecutable("hadolint", "2.15.1", ["--version"], directory), null);
   })();
 });
+
+test("run feeds input to the child's stdin", async () => {
+  const result = await run(process.execPath, ["-e", "process.stdin.pipe(process.stdout)"], { input: "hello sarif" });
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.stdout, "hello sarif");
+});

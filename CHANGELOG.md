@@ -13,6 +13,22 @@ tags and must not be reused or moved.
 
 ## [Unreleased]
 
+### Added
+
+- `reviewdog` input (default `false`): reports findings via [reviewdog](https://github.com/reviewdog/reviewdog)
+  v0.21.2, pinned in `tools.lock.json`. On pull requests it posts review comments on added or changed lines; on every
+  run it creates a neutral `PolyScan` check with annotations for all findings. Needs `checks: write` and
+  `pull-requests: write`; failures (missing permissions, fork PRs) only produce a warning. New `github-token` input
+  (default `${{ github.token }}`).
+- Job summary: Mermaid pie charts of findings by severity and by engine, a hotspots table (10 files with the most
+  findings, their worst severity and engines) and a top-rules table (10 most frequent rules).
+
+### Changed
+
+- Job summary: findings are grouped into collapsible sections per severity (critical and high expanded) with up to
+  200 rows each instead of the first 50 findings overall, and each location links to its source line (on pull
+  requests, in the PR head commit).
+
 ## [v17.2.2] - 2026-10-28
 
 ### Changed

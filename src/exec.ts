@@ -27,7 +27,7 @@ function isTextBusy(err: unknown): boolean {
 function spawnOnce(
   command: string,
   args: string[],
-  options: { cwd?: string; env: { [key: string]: string } },
+  options: { cwd?: string; env: { [key: string]: string }; input?: string },
 ): Promise<RunResult> {
   return new Promise((resolve, reject) => {
     let stdout = "";
@@ -37,11 +37,17 @@ function spawnOnce(
       child = childProcess.spawn(command, args, {
         cwd: options.cwd,
         env: options.env,
-        stdio: ["ignore", "pipe", "pipe"],
+        stdio: [options.input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
       });
     } catch (err) {
       reject(err);
       return;
+    }
+    if (options.input !== undefined) {
+      // A child that exits without draining stdin raises EPIPE here; its exit code
+      // and stderr already tell the caller what went wrong.
+      child.stdin?.on("error", () => undefined);
+      child.stdin?.end(options.input);
     }
     child.stdout?.setEncoding("utf8").on("data", (data: string) => {
       stdout += data;
@@ -59,7 +65,7 @@ function spawnOnce(
 export async function run(
   command: string,
   args: string[],
-  options: { cwd?: string; env?: { [key: string]: string } } = {},
+  options: { cwd?: string; env?: { [key: string]: string }; input?: string } = {},
 ): Promise<RunResult> {
   const mergedEnv: { [key: string]: string } = {};
   for (const [k, v] of Object.entries(process.env)) {
@@ -68,7 +74,7 @@ export async function run(
   if (options.env) Object.assign(mergedEnv, options.env);
   for (let attempt = 1; ; attempt++) {
     try {
-      return await spawnOnce(command, args, { cwd: options.cwd, env: mergedEnv });
+      return await spawnOnce(command, args, { cwd: options.cwd, env: mergedEnv, input: options.input });
     } catch (err) {
       if (!isTextBusy(err) || attempt === SPAWN_RETRY_ATTEMPTS) {
         return { exitCode: 127, stdout: "", stderr: String(err) };

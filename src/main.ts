@@ -22,6 +22,8 @@ import { evaluateGate } from "./gate";
 import { toSarif } from "./sarif";
 import { toSbom } from "./sbom";
 import { renderSummary } from "./summary";
+import { sourceBaseUrl } from "./links";
+import { runReviewdog } from "./reviewdog";
 import { ScanContext, githubContext, toJsonReport } from "./report";
 import { resolveEngines, unknownEngines, SUPPORTED_ENGINES } from "./engines";
 import { normalizeFindingPath, resolveOutputDir, resolveTarget, workspaceRoot, writeReportFile } from "./target";
@@ -56,6 +58,8 @@ interface ActionConfig {
   uploadArtifacts: boolean;
   artifactName: string;
   uploadSarif: boolean;
+  reviewdog: boolean;
+  githubToken: string;
   maxConcurrency: number;
   outputDir: string;
   trivyImage?: string;
@@ -89,6 +93,8 @@ function readConfig(): ActionConfig {
     uploadArtifacts: boolInput("upload-artifacts", true),
     artifactName: core.getInput("artifact-name") || DEFAULT_ARTIFACT_NAME,
     uploadSarif: boolInput("upload-sarif", false),
+    reviewdog: boolInput("reviewdog", false),
+    githubToken: core.getInput("github-token"),
     maxConcurrency: parseMaxConcurrency(
       core.getInput("max-concurrency"),
       DEFAULT_MAX_CONCURRENCY,
@@ -341,7 +347,15 @@ async function main(): Promise<void> {
   const findings = sortedFindings(engineResults);
   const counts = countBySeverity(findings);
   const gate = evaluateGate(findings, config.gate);
-  const summary = renderSummary(findings, counts, gate, config.gateEnforced, engineResults, context);
+  const summary = renderSummary(
+    findings,
+    counts,
+    gate,
+    config.gateEnforced,
+    engineResults,
+    context,
+    sourceBaseUrl(),
+  );
   const jsonReport = config.wantJsonReport
     ? toJsonReport({ findings, counts, gate, gateEnforced: config.gateEnforced, engineResults, context })
     : "";
@@ -356,6 +370,10 @@ async function main(): Promise<void> {
       "upload-sarif=true: use a follow-up 'github/codeql-action/upload-sarif' step " +
         `with sarif_file: ${reports.sarifPath} (needs security-events: write).`,
     );
+  }
+
+  if (config.reviewdog) {
+    await runReviewdog(findings, engineResults, config.githubToken);
   }
 
   const failedEngines = setOutputs(findings, engineResults, gate.passed);

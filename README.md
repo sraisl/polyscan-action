@@ -17,6 +17,8 @@ on: [push, pull_request]
 permissions:
   contents: read
   security-events: write   # only needed for upload-sarif
+  checks: write            # only needed for reviewdog
+  pull-requests: write     # only needed for reviewdog
 
 jobs:
   sast:
@@ -36,6 +38,7 @@ jobs:
           sarif: "true"
           sbom: "true"
           upload-artifacts: "true"
+          reviewdog: "true"
 
       # optional: push SARIF into GitHub Code Scanning
       - if: always()
@@ -65,6 +68,8 @@ jobs:
 | `upload-artifacts` | `true` | Upload SARIF + SBOM + JSON report + summary as a workflow artifact |
 | `artifact-name` | `polyscan-reports` | Artifact name; falls back to `<name>-<job>`, then `<name>-<job>-<random>`, if the name is already taken in the workflow run (matrix, several PolyScan steps) |
 | `upload-sarif` | `false` | Emit a hint to upload SARIF to code scanning (use the CodeQL step) |
+| `reviewdog` | `false` | Report findings via [reviewdog](#pr-review-comments-reviewdog): inline comments on changed lines of pull requests and a `PolyScan` check with annotations. Needs `checks: write` and `pull-requests: write` |
+| `github-token` | `${{ github.token }}` | Token reviewdog uses to post review comments and checks |
 | `trivy-image` | _(empty)_ | Docker image to scan with `trivy image` (e.g. `myapp:latest`). Image must be available in the local Docker daemon. Runs in addition to the filesystem scan. |
 | `output-dir` | `.` | Workspace-contained directory for generated reports |
 
@@ -90,9 +95,12 @@ successfully. PolyScan reuses a scanner already on `PATH` only when it reports e
 version is also the one that ran.
 
 - **Job summary** (`polyscan-summary.md`, also shown on the workflow run page): scanned target, commit and ref, total
-  duration and PolyScan version; per engine the status, pinned tool version, duration, findings per severity and any
-  note (why it was skipped or failed); secrets and container-image findings in their own tables; the first 50 findings;
-  and the Quality Gate as a table of found vs. allowed counts per gated severity.
+  duration and PolyScan version; Mermaid pie charts of the findings by severity and by engine; per engine the status,
+  pinned tool version, duration, findings per severity and any note (why it was skipped or failed); the 10 files with
+  the most findings (hotspots) and the 10 most frequent rules; secrets and container-image findings in their own
+  tables; all findings in collapsible sections per severity (critical and high expanded, up to 200 rows each), each
+  location linked to its source line (on pull requests, in the PR head commit); and the Quality Gate as a table of
+  found vs. allowed counts per gated severity.
 - **SARIF** (`polyscan.sarif`): one rule per `engine/ruleId` with `security` and `external/cwe/cwe-N` tags. When all
   findings of a rule share one severity, the rule also carries `security-severity` and a default level, so Code
   Scanning shows critical/high/medium/low; when they share one documentation link, it carries that as `helpUri`.
@@ -106,7 +114,21 @@ version is also the one that ran.
 - **JSON report** (`polyscan-report.json`, `schemaVersion: 1`): for further processing in scripts and dashboards.
   Contains `tool`, `scan` (target, requested engines, concurrency, start time, duration and the GitHub repository,
   ref, SHA, workflow, job and run URL), `gate` (enforced, passed, thresholds, reasons), `counts`, `engines` (status,
-  `pinnedVersion`, duration, counts per severity, note) and every normalized `finding` without the 50-row limit.
+  `pinnedVersion`, duration, counts per severity, note) and every normalized `finding` without the job summary's row limit.
+
+## PR review comments (reviewdog)
+
+With `reviewdog: "true"`, PolyScan downloads [reviewdog](https://github.com/reviewdog/reviewdog) (pinned and
+SHA-256-verified in `tools.lock.json`) and reports the findings to GitHub:
+
+- **Pull requests** (`pull_request`, `pull_request_target`): review comments on the lines the PR adds or changes
+  (`-filter-mode=added`), so findings that already existed don't flood the review. Comments that are already on
+  the PR are not posted again.
+- **Every run**: a `PolyScan` check with an annotation for every finding, shown in the PR's *Files changed* tab and
+  on the commit. The check concludes as *neutral*; whether the job fails is still decided by the Quality Gate.
+
+Container image findings (`trivy-image`) have no source location and are left out. reviewdog never fails the
+action: a missing permission or a read-only token (pull requests from forks) only produces a warning.
 
 ## Engines
 
@@ -205,15 +227,15 @@ MIT, Apache-2.0, ISC, BSD-3-Clause, BlueOak-1.0.0, 0BSD, and CC0; that file, not
 the authoritative list). The scan engines below are **not** bundled or vendored: PolyScan installs
 each one from its official distribution channel at scan time and invokes it as a separate
 subprocess — PolyScan never links against or redistributes their code. Binary/archive downloads
-(betterleaks, detekt, gitleaks, gosec, hadolint, the Kotlin compiler, opengrep, oxlint, SpotBugs/FindSecBugs, Trivy,
-trufflehog, zizmor) are SHA-256-verified against `tools.lock.json`; Semgrep and Bandit are
+(betterleaks, detekt, gitleaks, gosec, hadolint, the Kotlin compiler, opengrep, oxlint, reviewdog, SpotBugs/FindSecBugs,
+Trivy, trufflehog, zizmor) are SHA-256-verified against `tools.lock.json`; Semgrep and Bandit are
 installed via `pip install <tool>==<version>` and ESLint via `npm install eslint@<version>`,
 pinned to an exact version but relying on PyPI/npm registry integrity rather than PolyScan's own
 checksum verification.
 
 | Engine | License |
 |---|---|
-| oxlint, ESLint, gitleaks, betterleaks, zizmor | MIT |
+| oxlint, ESLint, gitleaks, betterleaks, zizmor, reviewdog | MIT |
 | Bandit, gosec, detekt, Kotlin compiler, Trivy | Apache-2.0 |
 | Semgrep, OpenGrep, SpotBugs | LGPL-2.1 |
 | FindSecBugs | LGPL-3.0 |
