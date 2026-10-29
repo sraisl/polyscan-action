@@ -90743,12 +90743,18 @@ function spawnOnce(command, args, options) {
             child = childProcess.spawn(command, args, {
                 cwd: options.cwd,
                 env: options.env,
-                stdio: ["ignore", "pipe", "pipe"],
+                stdio: [options.input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
             });
         }
         catch (err) {
             reject(err);
             return;
+        }
+        if (options.input !== undefined) {
+            // A child that exits without draining stdin raises EPIPE here; its exit code
+            // and stderr already tell the caller what went wrong.
+            child.stdin?.on("error", () => undefined);
+            child.stdin?.end(options.input);
         }
         child.stdout?.setEncoding("utf8").on("data", (data) => {
             stdout += data;
@@ -90772,7 +90778,7 @@ async function run(command, args, options = {}) {
         Object.assign(mergedEnv, options.env);
     for (let attempt = 1;; attempt++) {
         try {
-            return await spawnOnce(command, args, { cwd: options.cwd, env: mergedEnv });
+            return await spawnOnce(command, args, { cwd: options.cwd, env: mergedEnv, input: options.input });
         }
         catch (err) {
             if (!isTextBusy(err) || attempt === SPAWN_RETRY_ATTEMPTS) {
@@ -90905,12 +90911,51 @@ function evaluateGate(findings, cfg) {
 /***/ }),
 
 /***/ 73346:
-/***/ ((__unused_webpack_module, exports) => {
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
 "use strict";
 
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.findingUrl = findingUrl;
+exports.sourceBaseUrl = sourceBaseUrl;
+exports.pullRequestHeadSha = pullRequestHeadSha;
+exports.sourceUrl = sourceUrl;
+// Documentation links for findings (shared by the job summary and SARIF helpUri) and
+// links to the source lines they point at (job summary).
+const fs = __importStar(__nccwpck_require__(73024));
 // Keyed by EngineName (not a bare string) so a typo in an engine key fails to
 // compile instead of silently never matching.
 // Only link when a canonical URL can be derived with confidence: a fixed
@@ -90948,6 +90993,45 @@ function findingUrl(finding) {
         return specific;
     const cweMatch = finding.cwe ? /^CWE-(\d+)$/.exec(finding.cwe) : null;
     return cweMatch ? `https://cwe.mitre.org/data/definitions/${cweMatch[1]}.html` : undefined;
+}
+// Blob URL prefix ("https://github.com/owner/repo/blob/<sha>") for linking findings to
+// their source lines. On pull requests GITHUB_SHA is the ephemeral merge commit, so the
+// PR head commit is preferred. Returns undefined unless every part looks well-formed.
+function sourceBaseUrl(env = process.env, headSha = pullRequestHeadSha(env)) {
+    const server = env.GITHUB_SERVER_URL;
+    const repository = env.GITHUB_REPOSITORY;
+    const sha = headSha || env.GITHUB_SHA;
+    if (!server || !isHttpUrl(server))
+        return undefined;
+    if (!repository || !/^[\w.-]+\/[\w.-]+$/.test(repository))
+        return undefined;
+    if (!sha || !/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i.test(sha))
+        return undefined;
+    return `${server.replace(/\/+$/, "")}/${repository}/blob/${sha}`;
+}
+function pullRequestHeadSha(env = process.env) {
+    if (!env.GITHUB_EVENT_PATH)
+        return undefined;
+    try {
+        const event = JSON.parse(fs.readFileSync(env.GITHUB_EVENT_PATH, "utf-8"));
+        const sha = event.pull_request?.head?.sha;
+        return typeof sha === "string" ? sha : undefined;
+    }
+    catch {
+        return undefined;
+    }
+}
+// Link to the finding's line, or undefined for findings without a safe, relative
+// workspace path (container image layers, absolute paths, "..", "unknown").
+function sourceUrl(finding, baseUrl) {
+    if (!baseUrl || finding.source?.startsWith("image:"))
+        return undefined;
+    const file = finding.file.startsWith("./") ? finding.file.slice(2) : finding.file;
+    const segments = file.split("/");
+    if (!file || file === "unknown" || file.startsWith("/") || segments.includes(".."))
+        return undefined;
+    const anchor = finding.line > 0 ? `#L${finding.line}` : "";
+    return `${baseUrl}/${segments.map(encodeURIComponent).join("/")}${anchor}`;
 }
 
 
@@ -91015,6 +91099,8 @@ const gate_1 = __nccwpck_require__(81956);
 const sarif_1 = __nccwpck_require__(20866);
 const sbom_1 = __nccwpck_require__(20594);
 const summary_1 = __nccwpck_require__(28855);
+const links_1 = __nccwpck_require__(73346);
+const reviewdog_1 = __nccwpck_require__(90665);
 const report_1 = __nccwpck_require__(70665);
 const engines_1 = __nccwpck_require__(62616);
 const target_1 = __nccwpck_require__(76746);
@@ -91053,6 +91139,8 @@ function readConfig() {
         uploadArtifacts: boolInput("upload-artifacts", true),
         artifactName: core.getInput("artifact-name") || artifact_2.DEFAULT_ARTIFACT_NAME,
         uploadSarif: boolInput("upload-sarif", false),
+        reviewdog: boolInput("reviewdog", false),
+        githubToken: core.getInput("github-token"),
         maxConcurrency: (0, scheduler_1.parseMaxConcurrency)(core.getInput("max-concurrency"), DEFAULT_MAX_CONCURRENCY, engines_1.SUPPORTED_ENGINES.length),
         outputDir: (0, target_1.resolveOutputDir)(core.getInput("output-dir") || "."),
         trivyImage: core.getInput("trivy-image") || undefined,
@@ -91250,7 +91338,7 @@ async function main() {
     const findings = sortedFindings(engineResults);
     const counts = (0, schema_1.countBySeverity)(findings);
     const gate = (0, gate_1.evaluateGate)(findings, config.gate);
-    const summary = (0, summary_1.renderSummary)(findings, counts, gate, config.gateEnforced, engineResults, context);
+    const summary = (0, summary_1.renderSummary)(findings, counts, gate, config.gateEnforced, engineResults, context, (0, links_1.sourceBaseUrl)());
     const jsonReport = config.wantJsonReport
         ? (0, report_1.toJsonReport)({ findings, counts, gate, gateEnforced: config.gateEnforced, engineResults, context })
         : "";
@@ -91262,6 +91350,9 @@ async function main() {
     if (config.uploadSarif && reports.sarifPath) {
         core.info("upload-sarif=true: use a follow-up 'github/codeql-action/upload-sarif' step " +
             `with sarif_file: ${reports.sarifPath} (needs security-events: write).`);
+    }
+    if (config.reviewdog) {
+        await (0, reviewdog_1.runReviewdog)(findings, engineResults, config.githubToken);
     }
     const failedEngines = setOutputs(findings, engineResults, gate.passed);
     enforceResults(failedEngines, config.failOnEngineError, config.gateEnforced, gate);
@@ -91329,6 +91420,133 @@ function toJsonReport(input) {
         findings,
     };
     return JSON.stringify(report, null, 2);
+}
+
+
+/***/ }),
+
+/***/ 90665:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.reviewdogPasses = reviewdogPasses;
+exports.reviewdogArgs = reviewdogArgs;
+exports.reviewdogFindings = reviewdogFindings;
+exports.runReviewdog = runReviewdog;
+// reviewdog integration — posts findings as inline PR review comments and as a
+// GitHub check with annotations. Downloads a pinned reviewdog binary and feeds it
+// the PolyScan SARIF on stdin. Never fails the action: problems become warnings.
+const core = __importStar(__nccwpck_require__(37484));
+const fs = __importStar(__nccwpck_require__(73024));
+const path = __importStar(__nccwpck_require__(76760));
+const tc = __importStar(__nccwpck_require__(33472));
+const exec_1 = __nccwpck_require__(73190);
+const sarif_1 = __nccwpck_require__(20866);
+const target_1 = __nccwpck_require__(76746);
+const tools_1 = __nccwpck_require__(51732);
+const tool_versions_1 = __nccwpck_require__(88947);
+const REVIEWDOG = tool_versions_1.TOOLS.reviewdog;
+const PR_EVENTS = new Set(["pull_request", "pull_request_target"]);
+// On pull requests, comment inline on changed lines only, so pre-existing findings
+// don't flood the review. Every run also gets a check with annotations for all
+// findings; level=warning keeps that check neutral instead of failed, since the
+// Quality Gate (not reviewdog) decides whether the job fails.
+function reviewdogPasses(eventName) {
+    const passes = [];
+    if (eventName && PR_EVENTS.has(eventName)) {
+        passes.push({ reporter: "github-pr-review", filterMode: "added" });
+    }
+    passes.push({ reporter: "github-check", filterMode: "nofilter", level: "warning" });
+    return passes;
+}
+function reviewdogArgs(pass) {
+    return [
+        "-f=sarif",
+        "-name=PolyScan",
+        `-reporter=${pass.reporter}`,
+        `-filter-mode=${pass.filterMode}`,
+        "-fail-level=none",
+        ...(pass.level ? [`-level=${pass.level}`] : []),
+    ];
+}
+// Container image findings have no source location, so reviewdog cannot place them.
+function reviewdogFindings(findings) {
+    return findings.filter((finding) => !finding.source?.startsWith("image:"));
+}
+async function ensureReviewdog() {
+    core.info(`Downloading reviewdog v${REVIEWDOG.version}…`);
+    return (0, tools_1.cachedTool)("reviewdog", REVIEWDOG.version, "reviewdog", async (directory) => {
+        const archive = await (0, tools_1.downloadVerified)((0, tool_versions_1.githubReleaseUrl)(REVIEWDOG), REVIEWDOG.sha256);
+        await tc.extractTar(archive, directory);
+        fs.chmodSync(path.join(directory, "reviewdog"), 0o700);
+    });
+}
+async function runReviewdog(findings, engineResults, token, eventName = process.env.GITHUB_EVENT_NAME) {
+    if (!token) {
+        core.warning("reviewdog=true but no github-token is available; skipping reviewdog.");
+        return;
+    }
+    core.setSecret(token);
+    let bin;
+    try {
+        bin = await ensureReviewdog();
+    }
+    catch (err) {
+        core.warning(`reviewdog download failed: ${String(err).slice(0, 200)}`);
+        return;
+    }
+    const located = reviewdogFindings(findings);
+    const sarif = (0, sarif_1.toSarif)(located, engineResults);
+    for (const pass of reviewdogPasses(eventName)) {
+        const res = await (0, exec_1.run)(bin, reviewdogArgs(pass), {
+            cwd: (0, target_1.workspaceRoot)(),
+            env: { REVIEWDOG_GITHUB_API_TOKEN: token },
+            input: sarif,
+        });
+        if (res.exitCode === 0) {
+            core.info(`reviewdog (${pass.reporter}) reported ${located.length} finding(s).`);
+            continue;
+        }
+        core.warning(`reviewdog (${pass.reporter}) failed with exit code ${res.exitCode}: ` +
+            `${(res.stderr || res.stdout).trim().slice(-300)} — the workflow needs ` +
+            "'permissions: checks: write, pull-requests: write' (pull requests from forks " +
+            "only get a read-only token).");
+    }
 }
 
 
@@ -91996,25 +92214,98 @@ function imageSection(findings) {
     }
     return [...lines, ""];
 }
-function findingsSection(findings) {
+// Mermaid labels are quoted strings; keep them to a conservative character set.
+function mermaidLabel(value) {
+    return value.replaceAll(/[^\w .:/-]/g, "_");
+}
+function pieChart(title, slices) {
+    return [
+        "```mermaid",
+        `pie showData title ${title}`,
+        ...slices.map(([label, count]) => `    "${mermaidLabel(label)}" : ${count}`),
+        "```",
+        "",
+    ];
+}
+function chartsSection(findings, counts) {
     if (findings.length === 0)
         return [];
-    const shown = findings.slice(0, 50);
-    const lines = [
-        "### Findings",
-        "| Sev | Rule | Details | Location | Engine |",
-        "|---|---|---|---|---|",
+    const byEngine = new Map();
+    for (const finding of findings)
+        byEngine.set(finding.engine, (byEngine.get(finding.engine) ?? 0) + 1);
+    return [
+        ...pieChart("Findings by severity", schema_1.SEVERITY_ORDER.filter((sev) => counts[sev] > 0).map((sev) => [sev, counts[sev]])),
+        ...pieChart("Findings by engine", [...byEngine.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))),
     ];
-    for (const finding of shown) {
-        const cwe = finding.cwe ? ` (${finding.cwe})` : "";
-        lines.push(`| ${SEV_EMOJI[finding.severity]} ${finding.severity} | ` +
-            `${ruleCell(finding)}${cwe} | ${textCell(finding.message)} | ` +
-            `${code(findingLocation(finding))} | ${tableCell(finding.engine)} |`);
+}
+const TOP_N = 10;
+const SEV_RANK = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
+function hotspotsSection(findings) {
+    const byFile = new Map();
+    for (const finding of findings) {
+        if (finding.source?.startsWith("image:"))
+            continue;
+        const file = finding.file.startsWith("./") ? finding.file.slice(2) : finding.file;
+        byFile.set(file, [...(byFile.get(file) ?? []), finding]);
     }
-    if (findings.length > shown.length) {
-        lines.push("", `_… and ${findings.length - shown.length} more findings._`);
+    if (byFile.size === 0)
+        return [];
+    const lines = ["### 🔥 Hotspots", "", "| File | Findings | Worst | Engines |", "|---|---:|---|---|"];
+    const ranked = [...byFile.entries()].sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]));
+    for (const [file, fileFindings] of ranked.slice(0, TOP_N)) {
+        const worst = fileFindings.reduce((acc, f) => (SEV_RANK[f.severity] < SEV_RANK[acc] ? f.severity : acc), "info");
+        const engines = [...new Set(fileFindings.map((f) => f.engine))].sort().join(", ");
+        lines.push(`| ${code(file)} | ${fileFindings.length} | ${SEV_EMOJI[worst]} ${worst} | ${tableCell(engines)} |`);
     }
     return [...lines, ""];
+}
+function topRulesSection(findings) {
+    const byRule = new Map();
+    for (const finding of findings) {
+        const key = `${finding.engine}\u0000${finding.ruleId}`;
+        const entry = byRule.get(key);
+        if (entry)
+            entry.hits += 1;
+        else
+            byRule.set(key, { finding, hits: 1 });
+    }
+    if (byRule.size === 0)
+        return [];
+    const lines = ["### 📋 Top rules", "", "| Rule | Engine | Hits |", "|---|---|---:|"];
+    const ranked = [...byRule.values()].sort((a, b) => b.hits - a.hits || a.finding.ruleId.localeCompare(b.finding.ruleId));
+    for (const { finding, hits } of ranked.slice(0, TOP_N)) {
+        lines.push(`| ${ruleCell(finding)} | ${tableCell(finding.engine)} | ${hits} |`);
+    }
+    return [...lines, ""];
+}
+function locationCell(finding, sourceBaseUrl) {
+    const label = code(findingLocation(finding));
+    const url = (0, links_1.sourceUrl)(finding, sourceBaseUrl);
+    return url ? `[${label}](<${url}>)` : label;
+}
+// Keeps the summary well under GitHub's 1 MiB job summary limit on noisy repositories.
+const MAX_ROWS_PER_SEVERITY = 200;
+function findingsSection(findings, sourceBaseUrl) {
+    if (findings.length === 0)
+        return [];
+    const lines = ["### Findings", ""];
+    for (const severity of schema_1.SEVERITY_ORDER) {
+        const group = findings.filter((finding) => finding.severity === severity);
+        if (group.length === 0)
+            continue;
+        const open = severity === "critical" || severity === "high" ? " open" : "";
+        lines.push(`<details${open}>`, `<summary>${SEV_EMOJI[severity]} <b>${severity}</b> (${group.length})</summary>`, "", "| Rule | Details | Location | Engine |", "|---|---|---|---|");
+        for (const finding of group.slice(0, MAX_ROWS_PER_SEVERITY)) {
+            const cwe = finding.cwe ? ` (${finding.cwe})` : "";
+            lines.push(`| ${ruleCell(finding)}${cwe} | ${textCell(finding.message)} | ` +
+                `${locationCell(finding, sourceBaseUrl)} | ${tableCell(finding.engine)} |`);
+        }
+        if (group.length > MAX_ROWS_PER_SEVERITY) {
+            lines.push("", `_… and ${group.length - MAX_ROWS_PER_SEVERITY} more ${severity} findings (see the SARIF/JSON report)._`);
+        }
+        lines.push("", "</details>", "");
+    }
+    return lines;
 }
 function gateSection(gate, enforced) {
     let result;
@@ -92041,16 +92332,19 @@ function gateSection(gate, enforced) {
     }
     return [...lines, "", "_Low and info findings are reported but not gated._", ""];
 }
-function renderSummary(findings, counts, gate, gateEnforced, engineResults, context) {
+function renderSummary(findings, counts, gate, gateEnforced, engineResults, context, sourceBaseUrl) {
     return [
         "## 🔍 PolyScan Report",
         "",
         ...(context ? contextSection(context) : []),
         ...severitySection(counts),
+        ...chartsSection(findings, counts),
         ...engineSection(engineResults),
+        ...hotspotsSection(findings),
+        ...topRulesSection(findings),
         ...secretsSection(findings),
         ...imageSection(findings),
-        ...findingsSection(findings),
+        ...findingsSection(findings, sourceBaseUrl),
         ...gateSection(gate, gateEnforced),
     ].join("\n");
 }
@@ -148920,7 +149214,7 @@ module.exports = /*#__PURE__*/JSON.parse('{"name":"polyscan-action","version":"1
 /***/ ((module) => {
 
 "use strict";
-module.exports = /*#__PURE__*/JSON.parse('{"schemaVersion":1,"tools":{"bandit":{"provider":"pypi","package":"bandit","version":"1.9.4"},"betterleaks":{"provider":"github","repository":"betterleaks/betterleaks","version":"1.9.0","tagTemplate":"v{version}","assetTemplate":"betterleaks_{version}_linux_x64.tar.gz","sha256":"f8b185a39ffcece2a1ca82bf3a4e7435cd81963ffd16b7a9128daf75f35f6de7"},"detekt":{"provider":"github","repository":"detekt/detekt","version":"1.23.8","tagTemplate":"v{version}","assetTemplate":"detekt-cli-{version}-all.jar","sha256":"2ce2ff952e150baf28a29cda70a363b0340b3e81a55f43e51ec5edffc3d066c1"},"eslint":{"provider":"npm","package":"eslint","version":"10.13.0"},"findsecbugs":{"provider":"maven","group":"com.h3xstream.findsecbugs","artifact":"findsecbugs-plugin","extension":"jar","version":"1.14.0","sha256":"6fa340344fa433ff46c2985dab1010e8bc739f9395c983594a5240095e92abc8"},"gitleaks":{"provider":"github","repository":"gitleaks/gitleaks","version":"8.30.1","tagTemplate":"v{version}","assetTemplate":"gitleaks_{version}_linux_x64.tar.gz","sha256":"551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"},"gosec":{"provider":"github","repository":"securego/gosec","version":"2.30.0","tagTemplate":"v{version}","assetTemplate":"gosec_{version}_linux_amd64.tar.gz","sha256":"3fcce2c4e802ff4169217874602a7df355e9a37bcb6ffaa34b08f3d5f336cdfb"},"hadolint":{"provider":"github","repository":"hadolint/hadolint","version":"2.15.1","tagTemplate":"v{version}","assetTemplate":"hadolint-linux-x86_64","sha256":"c7187db94eeeeca956519a6af171adc31453941a1e777961f6e680f697c8c507"},"kotlin":{"provider":"github","repository":"JetBrains/kotlin","version":"2.4.21","tagTemplate":"v{version}","assetTemplate":"kotlin-compiler-{version}.zip","sha256":"7cc140e76daf416a0424a5557f99afd7ca89ebd463ea1101261e3e01c33e75cd"},"opengrep":{"provider":"github","repository":"opengrep/opengrep","version":"1.33.0","tagTemplate":"v{version}","assetTemplate":"opengrep_manylinux_x86","sha256":"2545812755572e1355ea60f96288f82a26eebed7fc8b512430d49d5667214c24"},"oxlint":{"provider":"github","repository":"oxc-project/oxc","version":"1.90.0","tagTemplate":"oxlint_v{version}","assetTemplate":"oxlint-x86_64-unknown-linux-gnu.tar.gz","sha256":"dd5b0c99ca7917fd6d3caabae260acc5bf7d65ae094541971862602fe288dca4"},"semgrep":{"provider":"pypi","package":"semgrep","version":"1.182.1"},"spotbugs":{"provider":"github","repository":"spotbugs/spotbugs","version":"4.10.5","tagTemplate":"{version}","assetTemplate":"spotbugs-{version}.tgz","sha256":"cce3244900cc215ccd9f5a8db29ed9468fc47824faf662f4fad005343d96007e"},"trivy":{"provider":"github","repository":"aquasecurity/trivy","version":"0.76.1","tagTemplate":"v{version}","assetTemplate":"trivy_{version}_Linux-64bit.tar.gz","sha256":"c7cbe3137fb8a48a17574bede3dd6beb16742d1e9772929940fc90082c39d9c0"},"trufflehog":{"provider":"github","repository":"trufflesecurity/trufflehog","version":"3.99.7","tagTemplate":"v{version}","assetTemplate":"trufflehog_{version}_linux_amd64.tar.gz","sha256":"bdbea0508e439b144f49de14e775908de5f902f3d14ea7ae8354bae72b0b72ef"},"zizmor":{"provider":"github","repository":"zizmorcore/zizmor","version":"1.31.1","tagTemplate":"v{version}","assetTemplate":"zizmor-x86_64-unknown-linux-gnu.tar.gz","sha256":"d185f726bdaf92df78273217dfdd24ebcd6b0ef48cf3ce776ff5762b6e138c99"}}}');
+module.exports = /*#__PURE__*/JSON.parse('{"schemaVersion":1,"tools":{"bandit":{"provider":"pypi","package":"bandit","version":"1.9.4"},"betterleaks":{"provider":"github","repository":"betterleaks/betterleaks","version":"1.9.0","tagTemplate":"v{version}","assetTemplate":"betterleaks_{version}_linux_x64.tar.gz","sha256":"f8b185a39ffcece2a1ca82bf3a4e7435cd81963ffd16b7a9128daf75f35f6de7"},"detekt":{"provider":"github","repository":"detekt/detekt","version":"1.23.8","tagTemplate":"v{version}","assetTemplate":"detekt-cli-{version}-all.jar","sha256":"2ce2ff952e150baf28a29cda70a363b0340b3e81a55f43e51ec5edffc3d066c1"},"eslint":{"provider":"npm","package":"eslint","version":"10.13.0"},"findsecbugs":{"provider":"maven","group":"com.h3xstream.findsecbugs","artifact":"findsecbugs-plugin","extension":"jar","version":"1.14.0","sha256":"6fa340344fa433ff46c2985dab1010e8bc739f9395c983594a5240095e92abc8"},"gitleaks":{"provider":"github","repository":"gitleaks/gitleaks","version":"8.30.1","tagTemplate":"v{version}","assetTemplate":"gitleaks_{version}_linux_x64.tar.gz","sha256":"551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"},"gosec":{"provider":"github","repository":"securego/gosec","version":"2.30.0","tagTemplate":"v{version}","assetTemplate":"gosec_{version}_linux_amd64.tar.gz","sha256":"3fcce2c4e802ff4169217874602a7df355e9a37bcb6ffaa34b08f3d5f336cdfb"},"hadolint":{"provider":"github","repository":"hadolint/hadolint","version":"2.15.1","tagTemplate":"v{version}","assetTemplate":"hadolint-linux-x86_64","sha256":"c7187db94eeeeca956519a6af171adc31453941a1e777961f6e680f697c8c507"},"kotlin":{"provider":"github","repository":"JetBrains/kotlin","version":"2.4.21","tagTemplate":"v{version}","assetTemplate":"kotlin-compiler-{version}.zip","sha256":"7cc140e76daf416a0424a5557f99afd7ca89ebd463ea1101261e3e01c33e75cd"},"opengrep":{"provider":"github","repository":"opengrep/opengrep","version":"1.33.0","tagTemplate":"v{version}","assetTemplate":"opengrep_manylinux_x86","sha256":"2545812755572e1355ea60f96288f82a26eebed7fc8b512430d49d5667214c24"},"oxlint":{"provider":"github","repository":"oxc-project/oxc","version":"1.90.0","tagTemplate":"oxlint_v{version}","assetTemplate":"oxlint-x86_64-unknown-linux-gnu.tar.gz","sha256":"dd5b0c99ca7917fd6d3caabae260acc5bf7d65ae094541971862602fe288dca4"},"reviewdog":{"provider":"github","repository":"reviewdog/reviewdog","version":"0.21.2","tagTemplate":"v{version}","assetTemplate":"reviewdog_{version}_Linux_x86_64.tar.gz","sha256":"30413aa3c7443e9c3c157fe5766cad40e3bb39a32e210ee69b710a8d5c4b8e51"},"semgrep":{"provider":"pypi","package":"semgrep","version":"1.182.1"},"spotbugs":{"provider":"github","repository":"spotbugs/spotbugs","version":"4.10.5","tagTemplate":"{version}","assetTemplate":"spotbugs-{version}.tgz","sha256":"cce3244900cc215ccd9f5a8db29ed9468fc47824faf662f4fad005343d96007e"},"trivy":{"provider":"github","repository":"aquasecurity/trivy","version":"0.76.1","tagTemplate":"v{version}","assetTemplate":"trivy_{version}_Linux-64bit.tar.gz","sha256":"c7cbe3137fb8a48a17574bede3dd6beb16742d1e9772929940fc90082c39d9c0"},"trufflehog":{"provider":"github","repository":"trufflesecurity/trufflehog","version":"3.99.7","tagTemplate":"v{version}","assetTemplate":"trufflehog_{version}_linux_amd64.tar.gz","sha256":"bdbea0508e439b144f49de14e775908de5f902f3d14ea7ae8354bae72b0b72ef"},"zizmor":{"provider":"github","repository":"zizmorcore/zizmor","version":"1.31.1","tagTemplate":"v{version}","assetTemplate":"zizmor-x86_64-unknown-linux-gnu.tar.gz","sha256":"d185f726bdaf92df78273217dfdd24ebcd6b0ef48cf3ce776ff5762b6e138c99"}}}');
 
 /***/ })
 

@@ -83,6 +83,14 @@
       "assetTemplate": "oxlint-x86_64-unknown-linux-gnu.tar.gz",
       "sha256": "dd5b0c99ca7917fd6d3caabae260acc5bf7d65ae094541971862602fe288dca4"
     },
+    "reviewdog": {
+      "provider": "github",
+      "repository": "reviewdog/reviewdog",
+      "version": "0.21.2",
+      "tagTemplate": "v{version}",
+      "assetTemplate": "reviewdog_{version}_Linux_x86_64.tar.gz",
+      "sha256": "30413aa3c7443e9c3c157fe5766cad40e3bb39a32e210ee69b710a8d5c4b8e51"
+    },
     "semgrep": {
       "provider": "pypi",
       "package": "semgrep",
