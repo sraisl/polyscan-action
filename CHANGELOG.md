@@ -13,6 +13,11 @@ tags and must not be reused or moved.
 
 ## [Unreleased]
 
+### Security
+
+- Override the transitive `glob` (14.0.3) and `minimatch` (11.0.4) dependencies of `@actions/artifact` to resolve
+  GHSA-3g3m-2fjr-6pw4 and GHSA-g3hv-75wg-m249.
+
 ## [v17.3.0] - 2026-10-29
 
 ### Added
