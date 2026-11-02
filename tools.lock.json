@@ -25,7 +25,7 @@
     "eslint": {
       "provider": "npm",
       "package": "eslint",
-      "version": "10.13.0"
+      "version": "10.14.0"
     },
     "findsecbugs": {
       "provider": "maven",
@@ -70,10 +70,10 @@
     "opengrep": {
       "provider": "github",
       "repository": "opengrep/opengrep",
-      "version": "1.33.0",
+      "version": "1.33.1",
       "tagTemplate": "v{version}",
       "assetTemplate": "opengrep_manylinux_x86",
-      "sha256": "2545812755572e1355ea60f96288f82a26eebed7fc8b512430d49d5667214c24"
+      "sha256": "46e8133cc490f9f50518061590ce2f6be5a08afaeda034471c0ceda4b3899808"
     },
     "oxlint": {
       "provider": "github",
@@ -94,7 +94,7 @@
     "semgrep": {
       "provider": "pypi",
       "package": "semgrep",
-      "version": "1.182.1"
+      "version": "1.183.0"
     },
     "spotbugs": {
       "provider": "github",
