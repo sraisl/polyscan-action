@@ -67,6 +67,18 @@ function findKotlinFiles(dir: string): string[] {
   return findSourceFiles(dir, ".kt");
 }
 
+function containsClassFile(dir: string): boolean {
+  try {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (entry.isFile() && entry.name.endsWith(".class")) return true;
+      if (entry.isDirectory() && containsClassFile(path.join(dir, entry.name))) return true;
+    }
+  } catch {
+    return false;
+  }
+  return false;
+}
+
 const CLASS_DIR_CANDIDATES = [
   "target/classes", // Maven
   "build/classes/kotlin/main", // Gradle Kotlin
@@ -76,7 +88,9 @@ const CLASS_DIR_CANDIDATES = [
 const SKIPPED_DIRS = new Set(["node_modules", ".git", "target", "build", "out"]);
 
 function hasBuildFile(dir: string): boolean {
-  return ["pom.xml", "build.gradle", "build.gradle.kts"].some((f) => fs.existsSync(path.join(dir, f)));
+  return ["pom.xml", "build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts"].some((f) =>
+    fs.existsSync(path.join(dir, f)),
+  );
 }
 
 function listSubdirs(dir: string): string[] {
@@ -96,7 +110,7 @@ function classDirsOf(dir: string): string[] {
   for (const c of CLASS_DIR_CANDIDATES) {
     const p = path.join(dir, c);
     try {
-      if (fs.statSync(p).isDirectory() && fs.readdirSync(p).length > 0) found.push(p);
+      if (fs.lstatSync(p).isDirectory() && containsClassFile(p)) found.push(p);
     } catch {
       // not present
     }
@@ -147,26 +161,44 @@ export function findWrapper(dir: string, name: string): string {
   }
 }
 
-async function tryProjectBuild(
+export function wrapperInvocation(wrapper: string): { command: string; args: string[] } {
+  try {
+    fs.accessSync(wrapper, fs.constants.X_OK);
+    return { command: wrapper, args: [] };
+  } catch {
+    return { command: "sh", args: [wrapper] };
+  }
+}
+
+interface BuildCommand {
+  command: string;
+  args: string[];
+}
+
+export async function tryProjectBuild(
   abs: string,
   noteParts: string[],
+  reuseBuild = false,
 ): Promise<string[]> {
-  // Reuse already compiled classes (e.g. from a previous build step) before building.
-  const existing = findClassDirs(abs);
-  if (existing.length > 0) return existing;
-
   const classDirs: string[] = [];
   for (const moduleDir of findModuleDirs(abs)) {
+    if (reuseBuild) {
+      const existing = findClassDirs(moduleDir);
+      if (existing.length > 0) {
+        classDirs.push(...existing);
+        continue;
+      }
+    }
     const mavenClasses = await tryMavenBuild(moduleDir, noteParts);
     classDirs.push(...(mavenClasses.length > 0 ? mavenClasses : await tryGradleBuild(moduleDir, noteParts)));
   }
   return classDirs;
 }
 
-async function mavenCommand(abs: string): Promise<string> {
+async function mavenCommand(abs: string): Promise<BuildCommand | null> {
   const mvnw = findWrapper(abs, "mvnw");
-  if (mvnw) return mvnw;
-  return (await which("mvn")) ? "mvn" : "";
+  if (mvnw) return wrapperInvocation(mvnw);
+  return (await which("mvn")) ? { command: "mvn", args: [] } : null;
 }
 
 async function tryMavenBuild(abs: string, noteParts: string[]): Promise<string[]> {
@@ -174,29 +206,31 @@ async function tryMavenBuild(abs: string, noteParts: string[]): Promise<string[]
   const command = await mavenCommand(abs);
   if (!command) return [];
   core.info("Detected pom.xml — running 'mvn compile' for a full classpath…");
-  const result = await run(command, ["-q", "-B", "-DskipTests", "compile"], { cwd: abs });
-  if (result.exitCode !== 0) noteParts.push("mvn compile had errors");
+  const result = await run(command.command, [...command.args, "-q", "-B", "-DskipTests", "compile"], { cwd: abs });
+  if (result.exitCode !== 0) noteParts.push(`mvn compile had errors in ${path.relative(workspaceRoot(), abs) || "."}`);
   return findClassDirs(abs);
 }
 
-async function gradleCommand(abs: string): Promise<string> {
+async function gradleCommand(abs: string): Promise<BuildCommand | null> {
   const gradlew = findWrapper(abs, "gradlew");
-  if (gradlew) return gradlew;
-  return (await which("gradle")) ? "gradle" : "";
+  if (gradlew) return wrapperInvocation(gradlew);
+  return (await which("gradle")) ? { command: "gradle", args: [] } : null;
 }
 
 async function tryGradleBuild(abs: string, noteParts: string[]): Promise<string[]> {
   const hasGradle =
     fs.existsSync(path.join(abs, "build.gradle")) ||
-    fs.existsSync(path.join(abs, "build.gradle.kts"));
+    fs.existsSync(path.join(abs, "build.gradle.kts")) ||
+    fs.existsSync(path.join(abs, "settings.gradle")) ||
+    fs.existsSync(path.join(abs, "settings.gradle.kts"));
   if (!hasGradle) return [];
 
   const command = await gradleCommand(abs);
   if (!command) return [];
 
   core.info("Detected Gradle build — running 'classes' task for a full classpath…");
-  const result = await run(command, ["classes", "--console=plain", "-q"], { cwd: abs });
-  if (result.exitCode !== 0) noteParts.push("gradle build had errors");
+  const result = await run(command.command, [...command.args, "classes", "--console=plain", "-q"], { cwd: abs });
+  if (result.exitCode !== 0) noteParts.push(`gradle build had errors in ${path.relative(workspaceRoot(), abs) || "."}`);
   return findClassDirs(abs);
 }
 
@@ -313,7 +347,7 @@ async function analyzeClasses(
   };
 }
 
-export async function runSpotbugs(target: string): Promise<EngineResult> {
+export async function runSpotbugs(target: string, reuseBuild = false): Promise<EngineResult> {
   const abs = resolveTarget(target);
   const javaFiles = findJavaFiles(abs);
   const kotlinFiles = findKotlinFiles(abs);
@@ -325,7 +359,7 @@ export async function runSpotbugs(target: string): Promise<EngineResult> {
   const workdir = fs.mkdtempSync(path.join(os.tmpdir(), "polyscan-spotbugs-"));
   try {
     const noteParts: string[] = [];
-    let classDirs = await tryProjectBuild(abs, noteParts);
+    let classDirs = await tryProjectBuild(abs, noteParts, reuseBuild);
     if (classDirs.length === 0) {
       classDirs = await compileWithoutBuild(javaFiles, kotlinFiles, workdir, noteParts);
     }
