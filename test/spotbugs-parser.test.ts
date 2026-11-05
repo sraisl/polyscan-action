@@ -1,7 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { parseSpotbugsXml } from "../src/engines/spotbugs";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+
+import { parseSpotbugsXml, findClassDirs, findModuleDirs, findWrapper } from "../src/engines/spotbugs";
 
 function bugInstance(opts: {
   type: string;
@@ -84,4 +88,27 @@ test("parseSpotbugsXml: empty XML returns empty array", () => {
 test("parseSpotbugsXml: no cweid attribute → cwe undefined", () => {
   const xml = `<BugCollection>${bugInstance({ type: "SQL_INJECTION_JDBC" })}</BugCollection>`;
   assert.equal(parseSpotbugsXml(xml, JAVA_FILES)[0].cwe, undefined);
+});
+
+test("monorepo module discovery, class dirs and wrapper lookup", () => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "polyscan-sb-")));
+  const prev = process.env.GITHUB_WORKSPACE;
+  process.env.GITHUB_WORKSPACE = root;
+  try {
+    const mod = path.join(root, "apps", "demo");
+    fs.mkdirSync(path.join(mod, "target", "classes"), { recursive: true });
+    fs.writeFileSync(path.join(mod, "target", "classes", "A.class"), "x");
+    fs.mkdirSync(path.join(root, "node_modules", "x", "target", "classes"), { recursive: true });
+    fs.writeFileSync(path.join(mod, "pom.xml"), "<project/>");
+    fs.writeFileSync(path.join(root, "mvnw"), "#!/bin/sh");
+
+    assert.deepEqual(findClassDirs(root), [path.join(mod, "target", "classes")]);
+    assert.deepEqual(findModuleDirs(root), [mod]);
+    assert.equal(findWrapper(mod, "mvnw"), path.join(root, "mvnw"));
+    assert.equal(findWrapper(mod, "gradlew"), "");
+  } finally {
+    if (prev === undefined) delete process.env.GITHUB_WORKSPACE;
+    else process.env.GITHUB_WORKSPACE = prev;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
