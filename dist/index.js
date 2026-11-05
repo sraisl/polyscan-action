@@ -88166,6 +88166,8 @@ const HADOLINT = tool_versions_1.TOOLS.hadolint;
 const IGNORED_DIRECTORIES = new Set([".git", "node_modules", "vendor", "build", "dist", "target", ".gradle"]);
 function isDockerfile(name) {
     const lower = name.toLowerCase();
+    if (lower.endsWith(".dockerignore"))
+        return false;
     return lower === "dockerfile" || lower.startsWith("dockerfile.") || lower.endsWith(".dockerfile");
 }
 function findDockerfiles(root) {
