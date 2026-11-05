@@ -66,6 +66,7 @@ interface ActionConfig {
   opengrepConfig: string;
   semgrepExcludeRules: string[];
   opengrepExcludeRules: string[];
+  spotbugsReuseBuild: boolean;
   gate: {
     maxCritical: number;
     maxHigh: number;
@@ -105,6 +106,7 @@ function readConfig(): ActionConfig {
     opengrepConfig: core.getInput("opengrep-config") || "auto",
     semgrepExcludeRules: parseExcludedRules(core.getInput("semgrep-exclude-rules")),
     opengrepExcludeRules: parseExcludedRules(core.getInput("opengrep-exclude-rules")),
+    spotbugsReuseBuild: boolInput("spotbugs-reuse-build", false),
     gate: {
       maxCritical: intInput("max-critical", 0),
       maxHigh: intInput("max-high", 0),
@@ -116,6 +118,7 @@ function readConfig(): ActionConfig {
 async function runEngine(
   name: string,
   target: string,
+  spotbugsReuseBuild: boolean,
   trivyImage: string | undefined,
   opengrepConfig: string,
   semgrepExcludeRules: string[],
@@ -134,7 +137,7 @@ async function runEngine(
       case "oxlint":
         return await runOxlint(target);
       case "spotbugs":
-        return await runSpotbugs(target);
+        return await runSpotbugs(target, spotbugsReuseBuild);
       case "trivy":
         return await runTrivy(target, trivyImage);
       case "detekt":
@@ -192,6 +195,7 @@ async function runEngines(config: ActionConfig): Promise<EngineResult[]> {
       const result = await runEngine(
         engine,
         config.target,
+        config.spotbugsReuseBuild,
         config.trivyImage,
         config.opengrepConfig,
         config.semgrepExcludeRules,

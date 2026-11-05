@@ -14,6 +14,10 @@ inputs:
     description: "Comma-separated engines to run, or 'all': semgrep,opengrep,bandit,eslint,oxlint,spotbugs,trivy,detekt,gitleaks,betterleaks,gosec,hadolint,zizmor,trufflehog (all excludes opt-in opengrep, eslint and trufflehog)"
     required: false
     default: "all"
+  spotbugs-reuse-build:
+    description: "Reuse existing SpotBugs build outputs containing compiled classes instead of rebuilding their modules"
+    required: false
+    default: "false"
   opengrep-config:
     description: "OpenGrep rules config: auto, local path, URL, or registry ID (used only when opengrep is selected)"
     required: false
