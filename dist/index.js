@@ -88884,6 +88884,11 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.findClassDirs = findClassDirs;
+exports.findModuleDirs = findModuleDirs;
+exports.findWrapper = findWrapper;
+exports.wrapperInvocation = wrapperInvocation;
+exports.tryProjectBuild = tryProjectBuild;
 exports.runSpotbugs = runSpotbugs;
 exports.parseSpotbugsXml = parseSpotbugsXml;
 // SpotBugs + FindSecBugs engine adapter for Java/Kotlin.
@@ -88952,55 +88957,166 @@ function findJavaFiles(dir) {
 function findKotlinFiles(dir) {
     return findSourceFiles(dir, ".kt");
 }
-function findClassDirs(dir) {
-    // Look for typical compiled-output directories.
-    const candidates = [
-        "target/classes", // Maven
-        "build/classes/kotlin/main", // Gradle Kotlin
-        "build/classes/java/main", // Gradle Java
-        "out/production/classes", // IntelliJ
-    ];
+function containsClassFile(dir) {
+    try {
+        for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+            if (entry.isFile() && entry.name.endsWith(".class"))
+                return true;
+            if (entry.isDirectory() && containsClassFile(path.join(dir, entry.name)))
+                return true;
+        }
+    }
+    catch {
+        return false;
+    }
+    return false;
+}
+const CLASS_DIR_CANDIDATES = [
+    "target/classes", // Maven
+    "build/classes/kotlin/main", // Gradle Kotlin
+    "build/classes/java/main", // Gradle Java
+    "out/production/classes", // IntelliJ
+];
+const SKIPPED_DIRS = new Set(["node_modules", ".git", "target", "build", "out"]);
+function hasBuildFile(dir) {
+    return ["pom.xml", "build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts"].some((f) => fs.existsSync(path.join(dir, f)));
+}
+function listSubdirs(dir) {
+    try {
+        return fs
+            .readdirSync(dir, { withFileTypes: true })
+            .filter((e) => e.isDirectory() && !e.isSymbolicLink() && e.name !== "node_modules" && e.name !== ".git")
+            .map((e) => path.join(dir, e.name))
+            .sort();
+    }
+    catch {
+        return [];
+    }
+}
+function classDirsOf(dir) {
     const found = [];
-    for (const c of candidates) {
+    for (const c of CLASS_DIR_CANDIDATES) {
         const p = path.join(dir, c);
-        if (fs.existsSync(p) && fs.readdirSync(p).length > 0)
-            found.push(p);
+        try {
+            if (fs.lstatSync(p).isDirectory() && containsClassFile(p))
+                found.push(p);
+        }
+        catch {
+            // not present
+        }
     }
     return found;
 }
-async function tryProjectBuild(abs, noteParts) {
-    const mavenClasses = await tryMavenBuild(abs, noteParts);
-    if (mavenClasses.length > 0)
-        return mavenClasses;
-    return tryGradleBuild(abs, noteParts);
+// Finds compiled class directories in dir and in any module directories below it.
+function findClassDirs(dir) {
+    const found = [];
+    const walk = (d) => {
+        found.push(...classDirsOf(d));
+        for (const sub of listSubdirs(d)) {
+            if (SKIPPED_DIRS.has(path.basename(sub)))
+                continue;
+            walk(sub);
+        }
+    };
+    walk(dir);
+    return found;
+}
+// Finds directories to build: the target itself, or the top-most module directories below it.
+function findModuleDirs(abs) {
+    if (hasBuildFile(abs))
+        return [abs];
+    const modules = [];
+    const walk = (d) => {
+        for (const sub of listSubdirs(d)) {
+            if (SKIPPED_DIRS.has(path.basename(sub)))
+                continue;
+            if (hasBuildFile(sub))
+                modules.push(sub);
+            else
+                walk(sub);
+        }
+    };
+    walk(abs);
+    return modules;
+}
+// Searches dir and its parents (up to the workspace root) for a wrapper script.
+function findWrapper(dir, name) {
+    const root = (0, target_1.workspaceRoot)();
+    let cur = dir;
+    for (;;) {
+        const candidate = path.join(cur, name);
+        if (fs.existsSync(candidate))
+            return candidate;
+        if (cur === root || path.dirname(cur) === cur)
+            return "";
+        cur = path.dirname(cur);
+        const rel = path.relative(root, cur);
+        if (rel.startsWith("..") || path.isAbsolute(rel))
+            return "";
+    }
+}
+function wrapperInvocation(wrapper) {
+    try {
+        fs.accessSync(wrapper, fs.constants.X_OK);
+        return { command: wrapper, args: [] };
+    }
+    catch {
+        return { command: "sh", args: [wrapper] };
+    }
+}
+async function tryProjectBuild(abs, noteParts, reuseBuild = false) {
+    const classDirs = [];
+    for (const moduleDir of findModuleDirs(abs)) {
+        if (reuseBuild) {
+            const existing = findClassDirs(moduleDir);
+            if (existing.length > 0) {
+                classDirs.push(...existing);
+                continue;
+            }
+        }
+        const mavenClasses = await tryMavenBuild(moduleDir, noteParts);
+        classDirs.push(...(mavenClasses.length > 0 ? mavenClasses : await tryGradleBuild(moduleDir, noteParts)));
+    }
+    return classDirs;
+}
+async function mavenCommand(abs) {
+    const mvnw = findWrapper(abs, "mvnw");
+    if (mvnw)
+        return wrapperInvocation(mvnw);
+    return (await (0, exec_1.which)("mvn")) ? { command: "mvn", args: [] } : null;
 }
 async function tryMavenBuild(abs, noteParts) {
-    if (!fs.existsSync(path.join(abs, "pom.xml")) || !(await (0, exec_1.which)("mvn")))
+    if (!fs.existsSync(path.join(abs, "pom.xml")))
+        return [];
+    const command = await mavenCommand(abs);
+    if (!command)
         return [];
     core.info("Detected pom.xml — running 'mvn compile' for a full classpath…");
-    const result = await (0, exec_1.run)("mvn", ["-q", "-B", "-DskipTests", "compile"], { cwd: abs });
+    const result = await (0, exec_1.run)(command.command, [...command.args, "-q", "-B", "-DskipTests", "compile"], { cwd: abs });
     if (result.exitCode !== 0)
-        noteParts.push("mvn compile had errors");
+        noteParts.push(`mvn compile had errors in ${path.relative((0, target_1.workspaceRoot)(), abs) || "."}`);
     return findClassDirs(abs);
 }
 async function gradleCommand(abs) {
-    const gradlew = path.join(abs, "gradlew");
-    if (fs.existsSync(gradlew))
-        return gradlew;
-    return (await (0, exec_1.which)("gradle")) ? "gradle" : "";
+    const gradlew = findWrapper(abs, "gradlew");
+    if (gradlew)
+        return wrapperInvocation(gradlew);
+    return (await (0, exec_1.which)("gradle")) ? { command: "gradle", args: [] } : null;
 }
 async function tryGradleBuild(abs, noteParts) {
     const hasGradle = fs.existsSync(path.join(abs, "build.gradle")) ||
-        fs.existsSync(path.join(abs, "build.gradle.kts"));
+        fs.existsSync(path.join(abs, "build.gradle.kts")) ||
+        fs.existsSync(path.join(abs, "settings.gradle")) ||
+        fs.existsSync(path.join(abs, "settings.gradle.kts"));
     if (!hasGradle)
         return [];
     const command = await gradleCommand(abs);
     if (!command)
         return [];
     core.info("Detected Gradle build — running 'classes' task for a full classpath…");
-    const result = await (0, exec_1.run)(command, ["classes", "--console=plain", "-q"], { cwd: abs });
+    const result = await (0, exec_1.run)(command.command, [...command.args, "classes", "--console=plain", "-q"], { cwd: abs });
     if (result.exitCode !== 0)
-        noteParts.push("gradle build had errors");
+        noteParts.push(`gradle build had errors in ${path.relative((0, target_1.workspaceRoot)(), abs) || "."}`);
     return findClassDirs(abs);
 }
 async function ensureKotlinc() {
@@ -89092,7 +89208,7 @@ async function analyzeClasses(script, classDirs, workdir, sources) {
         status: "success",
     };
 }
-async function runSpotbugs(target) {
+async function runSpotbugs(target, reuseBuild = false) {
     const abs = (0, target_1.resolveTarget)(target);
     const javaFiles = findJavaFiles(abs);
     const kotlinFiles = findKotlinFiles(abs);
@@ -89103,7 +89219,7 @@ async function runSpotbugs(target) {
     const workdir = fs.mkdtempSync(path.join(os.tmpdir(), "polyscan-spotbugs-"));
     try {
         const noteParts = [];
-        let classDirs = await tryProjectBuild(abs, noteParts);
+        let classDirs = await tryProjectBuild(abs, noteParts, reuseBuild);
         if (classDirs.length === 0) {
             classDirs = await compileWithoutBuild(javaFiles, kotlinFiles, workdir, noteParts);
         }
@@ -90133,6 +90249,7 @@ function readConfig() {
         opengrepConfig: core.getInput("opengrep-config") || "auto",
         semgrepExcludeRules: (0, rule_exclusions_1.parseExcludedRules)(core.getInput("semgrep-exclude-rules")),
         opengrepExcludeRules: (0, rule_exclusions_1.parseExcludedRules)(core.getInput("opengrep-exclude-rules")),
+        spotbugsReuseBuild: boolInput("spotbugs-reuse-build", false),
         gate: {
             maxCritical: intInput("max-critical", 0),
             maxHigh: intInput("max-high", 0),
@@ -90140,7 +90257,7 @@ function readConfig() {
         },
     };
 }
-async function runEngine(name, target, trivyImage, opengrepConfig, semgrepExcludeRules, opengrepExcludeRules) {
+async function runEngine(name, target, spotbugsReuseBuild, trivyImage, opengrepConfig, semgrepExcludeRules, opengrepExcludeRules) {
     try {
         switch (name) {
             case "semgrep":
@@ -90154,7 +90271,7 @@ async function runEngine(name, target, trivyImage, opengrepConfig, semgrepExclud
             case "oxlint":
                 return await (0, oxlint_1.runOxlint)(target);
             case "spotbugs":
-                return await (0, spotbugs_1.runSpotbugs)(target);
+                return await (0, spotbugs_1.runSpotbugs)(target, spotbugsReuseBuild);
             case "trivy":
                 return await (0, trivy_1.runTrivy)(target, trivyImage);
             case "detekt":
@@ -90201,7 +90318,7 @@ async function runEngines(config) {
     return (0, scheduler_1.mapConcurrentWithBarriers)(config.engines, config.maxConcurrency, (engine) => engine === "spotbugs", async (engine) => {
         core.info(`[${engine}] started`);
         const startedAt = Date.now();
-        const result = await runEngine(engine, config.target, config.trivyImage, config.opengrepConfig, config.semgrepExcludeRules, config.opengrepExcludeRules);
+        const result = await runEngine(engine, config.target, config.spotbugsReuseBuild, config.trivyImage, config.opengrepConfig, config.semgrepExcludeRules, config.opengrepExcludeRules);
         normalizeEngineFindings(result, config.target);
         result.durationMs = Date.now() - startedAt;
         const elapsedSeconds = (result.durationMs / 1000).toFixed(1);
