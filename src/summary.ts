@@ -5,7 +5,7 @@ import { EngineName } from "./engines";
 import { findingUrl, sourceUrl } from "./links";
 import { ScanContext } from "./report";
 import { reportedPinnedVersion } from "./tool-versions";
-import pkg from "../package.json";
+import { VERSION } from "./version";
 
 const SEV_EMOJI: Record<Severity, string> = {
   critical: "🟣",
@@ -109,7 +109,7 @@ function contextSection(context: ScanContext): string[] {
     parts.push(`**Commit:** ${code(shortSha(github.sha))}${ref}`);
   }
   parts.push(`**Engines:** ${context.engines.length}`, `**Duration:** ${formatDuration(context.durationMs)}`);
-  parts.push(`**PolyScan:** ${code(`v${pkg.version}`)}`);
+  parts.push(`**PolyScan:** ${code(`v${VERSION}`)}`);
   return [parts.join(" · "), ""];
 }
 

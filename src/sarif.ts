@@ -2,7 +2,7 @@
 import { EngineResult, Finding, Severity } from "./schema";
 import { findingUrl } from "./links";
 import { reportedPinnedVersion } from "./tool-versions";
-import pkg from "../package.json";
+import { VERSION } from "./version";
 
 function sarifLevel(sev: Severity): string {
   switch (sev) {
@@ -153,8 +153,8 @@ export function toSarif(findings: Finding[], engineResults?: EngineResult[]): st
         tool: {
           driver: {
             name: "PolyScan",
-            version: pkg.version,
-            semanticVersion: pkg.version,
+            version: VERSION,
+            semanticVersion: VERSION,
             informationUri: "https://github.com/sraisl/polyscan-action",
             rules,
           },

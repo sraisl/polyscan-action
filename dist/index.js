@@ -90562,13 +90562,10 @@ main().catch((err) => {
 /***/ }),
 
 /***/ 70665:
-/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
 "use strict";
 
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.JSON_REPORT_SCHEMA_VERSION = void 0;
 exports.githubContext = githubContext;
@@ -90576,7 +90573,7 @@ exports.toJsonReport = toJsonReport;
 // Scan context shared by all reports, and the machine-readable JSON report.
 const schema_1 = __nccwpck_require__(75060);
 const tool_versions_1 = __nccwpck_require__(88947);
-const package_json_1 = __importDefault(__nccwpck_require__(8330));
+const version_1 = __nccwpck_require__(311);
 exports.JSON_REPORT_SCHEMA_VERSION = 1;
 function githubContext(env = process.env) {
     const context = {
@@ -90597,7 +90594,7 @@ function toJsonReport(input) {
     const { findings, counts, gate, gateEnforced, engineResults, context } = input;
     const report = {
         schemaVersion: exports.JSON_REPORT_SCHEMA_VERSION,
-        tool: { name: "PolyScan", version: package_json_1.default.version },
+        tool: { name: "PolyScan", version: version_1.VERSION },
         scan: context,
         gate: {
             enforced: gateEnforced,
@@ -90764,18 +90761,15 @@ function parseExcludedRules(input) {
 /***/ }),
 
 /***/ 20866:
-/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
 "use strict";
 
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.toSarif = toSarif;
 const links_1 = __nccwpck_require__(73346);
 const tool_versions_1 = __nccwpck_require__(88947);
-const package_json_1 = __importDefault(__nccwpck_require__(8330));
+const version_1 = __nccwpck_require__(311);
 function sarifLevel(sev) {
     switch (sev) {
         case "critical":
@@ -90908,8 +90902,8 @@ function toSarif(findings, engineResults) {
                 tool: {
                     driver: {
                         name: "PolyScan",
-                        version: package_json_1.default.version,
-                        semanticVersion: package_json_1.default.version,
+                        version: version_1.VERSION,
+                        semanticVersion: version_1.VERSION,
                         informationUri: "https://github.com/sraisl/polyscan-action",
                         rules,
                     },
@@ -90964,9 +90958,6 @@ var __importStar = (this && this.__importStar) || (function () {
         return result;
     };
 })();
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.toSbom = toSbom;
 // CycloneDX 1.5 SBOM generator.
@@ -90976,7 +90967,7 @@ exports.toSbom = toSbom;
 const fs = __importStar(__nccwpck_require__(73024));
 const path = __importStar(__nccwpck_require__(76760));
 const crypto = __importStar(__nccwpck_require__(77598));
-const package_json_1 = __importDefault(__nccwpck_require__(8330));
+const version_1 = __nccwpck_require__(311);
 // npm: prefer package-lock.json (exact transitive deps) over package.json.
 function detectNpm(target, comps) {
     if (detectNpmLock(target, comps))
@@ -91140,7 +91131,7 @@ function toSbom(target) {
         version: 1,
         metadata: {
             timestamp: new Date().toISOString(),
-            tools: [{ vendor: "Stefan Raisl", name: "PolyScan", version: package_json_1.default.version }],
+            tools: [{ vendor: "Stefan Raisl", name: "PolyScan", version: version_1.VERSION }],
         },
         components: comps,
     };
@@ -91250,13 +91241,10 @@ function countBySeverity(findings) {
 /***/ }),
 
 /***/ 28855:
-/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
 "use strict";
 
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.formatDuration = formatDuration;
 exports.renderSummary = renderSummary;
@@ -91264,7 +91252,7 @@ exports.renderSummary = renderSummary;
 const schema_1 = __nccwpck_require__(75060);
 const links_1 = __nccwpck_require__(73346);
 const tool_versions_1 = __nccwpck_require__(88947);
-const package_json_1 = __importDefault(__nccwpck_require__(8330));
+const version_1 = __nccwpck_require__(311);
 const SEV_EMOJI = {
     critical: "🟣",
     high: "🔴",
@@ -91357,7 +91345,7 @@ function contextSection(context) {
         parts.push(`**Commit:** ${code(shortSha(github.sha))}${ref}`);
     }
     parts.push(`**Engines:** ${context.engines.length}`, `**Duration:** ${formatDuration(context.durationMs)}`);
-    parts.push(`**PolyScan:** ${code(`v${package_json_1.default.version}`)}`);
+    parts.push(`**PolyScan:** ${code(`v${version_1.VERSION}`)}`);
     return [parts.join(" · "), ""];
 }
 function findingLocation(finding) {
@@ -92010,6 +91998,19 @@ function headIsForeign(eventPayload) {
         return true;
     return undefined;
 }
+
+
+/***/ }),
+
+/***/ 311:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.VERSION = void 0;
+// Generated by scripts/gen-version.cjs from package.json. Do not edit manually.
+exports.VERSION = "17.3.0";
 
 
 /***/ }),
@@ -143073,14 +143074,6 @@ module.exports = index;
 
 "use strict";
 module.exports = /*#__PURE__*/JSON.parse('{"name":"@actions/artifact","version":"5.0.3","preview":true,"description":"Actions artifact lib","keywords":["github","actions","artifact"],"homepage":"https://github.com/actions/toolkit/tree/main/packages/artifact","license":"MIT","main":"lib/artifact.js","types":"lib/artifact.d.ts","directories":{"lib":"lib","test":"__tests__"},"files":["lib","!.DS_Store"],"publishConfig":{"access":"public"},"repository":{"type":"git","url":"git+https://github.com/actions/toolkit.git","directory":"packages/artifact"},"scripts":{"audit-moderate":"npm install && npm audit --json --audit-level=moderate > audit.json","test":"cd ../../ && npm run test ./packages/artifact","bootstrap":"cd ../../ && npm run bootstrap","tsc-run":"tsc","tsc":"npm run bootstrap && npm run tsc-run","gen:docs":"typedoc --plugin typedoc-plugin-markdown --out docs/generated src/artifact.ts --githubPages false --readme none"},"bugs":{"url":"https://github.com/actions/toolkit/issues"},"dependencies":{"@actions/core":"^2.0.0","@actions/github":"^6.0.1","@actions/http-client":"^3.0.2","@azure/storage-blob":"^12.29.1","@octokit/core":"^5.2.1","@octokit/plugin-request-log":"^1.0.4","@octokit/plugin-retry":"^3.0.9","@octokit/request":"^8.4.1","@octokit/request-error":"^5.1.1","@protobuf-ts/plugin":"^2.2.3-alpha.1","archiver":"^7.0.1","jwt-decode":"^3.1.2","unzip-stream":"^0.3.1"},"devDependencies":{"@types/archiver":"^5.3.2","@types/unzip-stream":"^0.3.4","typedoc":"^0.28.13","typedoc-plugin-markdown":"^3.17.1","typescript":"^5.2.2"},"overrides":{"uri-js":"npm:uri-js-replace@^1.0.1","node-fetch":"^3.3.2"}}');
-
-/***/ }),
-
-/***/ 8330:
-/***/ ((module) => {
-
-"use strict";
-module.exports = /*#__PURE__*/JSON.parse('{"name":"polyscan-action","version":"17.3.0","description":"Multi-language SAST orchestrator as a native TypeScript GitHub Action with Quality Gate, SARIF, CycloneDX SBOM and job summary","main":"dist/index.js","engines":{"node":"24.x"},"scripts":{"prebuild":"node scripts/require-node24.cjs","build":"ncc build src/main.ts -o dist --source-map --license licenses.txt && node scripts/check-bundle.cjs","build:test":"tsc -p tsconfig.test.json","typecheck":"tsc --noEmit","test":"npm run build:test && node --test \\"dist-test/test/**/*.js\\"","all":"npm run typecheck && npm run build","engines:list":"node scripts/engine-tools.mjs list","engines:check":"node scripts/engine-tools.mjs check","engines:update":"node scripts/engine-tools.mjs update"},"keywords":["sast","security","semgrep","opengrep","bandit","eslint","gosec","spotbugs","zizmor","trufflehog","sarif","sbom","github-action"],"author":"Stefan Raisl","license":"MIT","dependencies":{"@actions/artifact":"^5.0.3","@actions/core":"^1.11.1","@actions/exec":"^1.1.1","@actions/tool-cache":"^2.0.2"},"devDependencies":{"@types/node":"26.6.3","@vercel/ncc":"0.45.0","typescript":"5.9.3"},"overrides":{"undici":"^6.29.1","brace-expansion":"5.0.12","glob":"14.0.3","minimatch":"11.0.4"}}');
 
 /***/ }),
 

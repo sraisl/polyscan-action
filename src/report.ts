@@ -2,7 +2,7 @@
 import { EngineResult, Finding, SeverityCounts, countBySeverity } from "./schema";
 import { GateResult } from "./gate";
 import { reportedPinnedVersion } from "./tool-versions";
-import pkg from "../package.json";
+import { VERSION } from "./version";
 
 export const JSON_REPORT_SCHEMA_VERSION = 1;
 
@@ -55,7 +55,7 @@ export function toJsonReport(input: JsonReportInput): string {
   const { findings, counts, gate, gateEnforced, engineResults, context } = input;
   const report = {
     schemaVersion: JSON_REPORT_SCHEMA_VERSION,
-    tool: { name: "PolyScan", version: pkg.version },
+    tool: { name: "PolyScan", version: VERSION },
     scan: context,
     gate: {
       enforced: gateEnforced,
