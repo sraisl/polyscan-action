@@ -22,8 +22,17 @@ import { evaluateGate } from "./gate";
 import { toSarif } from "./sarif";
 import { toSbom } from "./sbom";
 import { renderSummary } from "./summary";
+import { sourceBaseUrl } from "./links";
+import { runReviewdog } from "./reviewdog";
 import { ScanContext, githubContext, toJsonReport } from "./report";
-import { resolveEngines, unknownEngines, SUPPORTED_ENGINES } from "./engines";
+import {
+  resolveEngines,
+  selectEnginesForRun,
+  unknownEngines,
+  SkippedEngine,
+  SUPPORTED_ENGINES,
+} from "./engines";
+import { isUntrustedRun, RunTrust } from "./untrusted";
 import { normalizeFindingPath, resolveOutputDir, resolveTarget, workspaceRoot, writeReportFile } from "./target";
 import { assertSupportedPlatform } from "./tools";
 import { mapConcurrentWithBarriers, parseMaxConcurrency } from "./scheduler";
@@ -48,6 +57,10 @@ function intInput(name: string, def: number): number {
 interface ActionConfig {
   target: string;
   engines: string[];
+  // Engines safe mode withheld because the run is untrusted.
+  skippedEngines: SkippedEngine[];
+  allowRiskyEngines: boolean;
+  trust: RunTrust;
   gateEnforced: boolean;
   failOnEngineError: boolean;
   wantSarif: boolean;
@@ -56,12 +69,15 @@ interface ActionConfig {
   uploadArtifacts: boolean;
   artifactName: string;
   uploadSarif: boolean;
+  reviewdog: boolean;
+  githubToken: string;
   maxConcurrency: number;
   outputDir: string;
   trivyImage?: string;
   opengrepConfig: string;
   semgrepExcludeRules: string[];
   opengrepExcludeRules: string[];
+  spotbugsReuseBuild: boolean;
   gate: {
     maxCritical: number;
     maxHigh: number;
@@ -70,17 +86,27 @@ interface ActionConfig {
 }
 
 function readConfig(): ActionConfig {
-  const engines = resolveEngines(core.getInput("engines"));
-  const unknown = unknownEngines(engines);
+  const requested = resolveEngines(core.getInput("engines"));
+  const unknown = unknownEngines(requested);
   if (unknown.length > 0) {
     throw new Error(
       `Unknown engine(s): ${unknown.join(", ")}. Valid engines: ${SUPPORTED_ENGINES.join(", ")}`,
     );
   }
 
+  const trust = isUntrustedRun();
+  const allowRiskyEngines = boolInput("allow-risky-engines", false);
+  const selection = selectEnginesForRun(requested, {
+    untrusted: trust.untrusted,
+    allowRisky: allowRiskyEngines,
+  });
+
   return {
     target: resolveTarget(core.getInput("target") || "."),
-    engines,
+    engines: selection.engines,
+    skippedEngines: selection.skipped,
+    allowRiskyEngines,
+    trust,
     gateEnforced: boolInput("gate", true),
     failOnEngineError: boolInput("fail-on-engine-error", true),
     wantSarif: boolInput("sarif", true),
@@ -89,6 +115,8 @@ function readConfig(): ActionConfig {
     uploadArtifacts: boolInput("upload-artifacts", true),
     artifactName: core.getInput("artifact-name") || DEFAULT_ARTIFACT_NAME,
     uploadSarif: boolInput("upload-sarif", false),
+    reviewdog: boolInput("reviewdog", false),
+    githubToken: core.getInput("github-token"),
     maxConcurrency: parseMaxConcurrency(
       core.getInput("max-concurrency"),
       DEFAULT_MAX_CONCURRENCY,
@@ -99,6 +127,7 @@ function readConfig(): ActionConfig {
     opengrepConfig: core.getInput("opengrep-config") || "auto",
     semgrepExcludeRules: parseExcludedRules(core.getInput("semgrep-exclude-rules")),
     opengrepExcludeRules: parseExcludedRules(core.getInput("opengrep-exclude-rules")),
+    spotbugsReuseBuild: boolInput("spotbugs-reuse-build", false),
     gate: {
       maxCritical: intInput("max-critical", 0),
       maxHigh: intInput("max-high", 0),
@@ -110,6 +139,7 @@ function readConfig(): ActionConfig {
 async function runEngine(
   name: string,
   target: string,
+  spotbugsReuseBuild: boolean,
   trivyImage: string | undefined,
   opengrepConfig: string,
   semgrepExcludeRules: string[],
@@ -128,7 +158,7 @@ async function runEngine(
       case "oxlint":
         return await runOxlint(target);
       case "spotbugs":
-        return await runSpotbugs(target);
+        return await runSpotbugs(target, spotbugsReuseBuild);
       case "trivy":
         return await runTrivy(target, trivyImage);
       case "detekt":
@@ -186,6 +216,7 @@ async function runEngines(config: ActionConfig): Promise<EngineResult[]> {
       const result = await runEngine(
         engine,
         config.target,
+        config.spotbugsReuseBuild,
         config.trivyImage,
         config.opengrepConfig,
         config.semgrepExcludeRules,
@@ -202,6 +233,44 @@ async function runEngines(config: ActionConfig): Promise<EngineResult[]> {
       return result;
     },
   );
+}
+
+// Reports safe mode's decision and turns each withheld engine into a "skipped"
+// result, so the job summary and the engine outputs account for it instead of
+// silently dropping it from the run.
+function reportSafeMode(config: ActionConfig): EngineResult[] {
+  // Logged on every run, trusted or not: without it a misclassified run looks
+  // like a run where safe mode simply had nothing to do.
+  core.info(
+    `Run trust: ${config.trust.untrusted ? "untrusted" : "trusted"} — ${config.trust.reason}`,
+  );
+  if (config.trust.advisory) core.warning(config.trust.advisory);
+
+  if (config.skippedEngines.length === 0) {
+    if (config.trust.untrusted && config.allowRiskyEngines) {
+      core.warning(
+        `Untrusted run (${config.trust.reason}), but 'allow-risky-engines: true' is set — ` +
+          "engines that execute repository code are not being withheld.",
+      );
+    } else if (config.trust.untrusted) {
+      core.info(`Untrusted run (${config.trust.reason}) — no risky engines were requested.`);
+    }
+    return [];
+  }
+
+  core.warning(
+    `Safe mode: skipping ${config.skippedEngines.map((s) => s.engine).join(", ")} because this ` +
+      `is an untrusted run (${config.trust.reason}). Set 'allow-risky-engines: true' to run them anyway.`,
+  );
+  return config.skippedEngines.map((skipped) => {
+    core.info(`[${skipped.engine}] skipped by safe mode: ${skipped.reason}`);
+    return {
+      engine: skipped.engine,
+      findings: [],
+      status: "skipped" as const,
+      note: `skipped by safe mode: ${skipped.reason}`,
+    };
+  });
 }
 
 function sortedFindings(engineResults: EngineResult[]): Finding[] {
@@ -277,11 +346,17 @@ async function uploadReports(files: string[], outputDir: string, artifactName: s
 }
 
 function setOutputs(
+  config: ActionConfig,
   findings: Finding[],
   engineResults: EngineResult[],
   gatePassed: boolean,
 ): EngineResult[] {
   const counts = countBySeverity(findings);
+  core.setOutput("untrusted-run", String(config.trust.untrusted));
+  core.setOutput(
+    "skipped-risky-engines",
+    config.skippedEngines.map((skipped) => skipped.engine).join(","),
+  );
   core.setOutput("total", String(counts.total));
   core.setOutput("critical", String(counts.critical));
   core.setOutput("high", String(counts.high));
@@ -327,12 +402,13 @@ async function main(): Promise<void> {
   assertSupportedPlatform();
   const config = readConfig();
   core.info(`PolyScan scanning "${config.target}" with engines: ${config.engines.join(", ")}`);
+  const skippedResults = reportSafeMode(config);
 
   const startedAt = new Date();
-  const engineResults = await runEngines(config);
+  const engineResults = [...(await runEngines(config)), ...skippedResults];
   const context: ScanContext = {
     target: path.relative(workspaceRoot(), config.target).split(path.sep).join("/") || ".",
-    engines: config.engines,
+    engines: [...config.engines, ...config.skippedEngines.map((skipped) => skipped.engine)],
     maxConcurrency: config.maxConcurrency,
     startedAt: startedAt.toISOString(),
     durationMs: Date.now() - startedAt.getTime(),
@@ -341,7 +417,15 @@ async function main(): Promise<void> {
   const findings = sortedFindings(engineResults);
   const counts = countBySeverity(findings);
   const gate = evaluateGate(findings, config.gate);
-  const summary = renderSummary(findings, counts, gate, config.gateEnforced, engineResults, context);
+  const summary = renderSummary(
+    findings,
+    counts,
+    gate,
+    config.gateEnforced,
+    engineResults,
+    context,
+    sourceBaseUrl(),
+  );
   const jsonReport = config.wantJsonReport
     ? toJsonReport({ findings, counts, gate, gateEnforced: config.gateEnforced, engineResults, context })
     : "";
@@ -358,7 +442,11 @@ async function main(): Promise<void> {
     );
   }
 
-  const failedEngines = setOutputs(findings, engineResults, gate.passed);
+  if (config.reviewdog) {
+    await runReviewdog(findings, engineResults, config.githubToken);
+  }
+
+  const failedEngines = setOutputs(config, findings, engineResults, gate.passed);
   enforceResults(failedEngines, config.failOnEngineError, config.gateEnforced, gate);
 }
 

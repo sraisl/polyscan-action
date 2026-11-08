@@ -1,4 +1,6 @@
-// Documentation links for findings, shared by the job summary and SARIF helpUri.
+// Documentation links for findings (shared by the job summary and SARIF helpUri) and
+// links to the source lines they point at (job summary).
+import * as fs from "node:fs";
 import { Finding } from "./schema";
 import { EngineName } from "./engines";
 
@@ -39,4 +41,44 @@ export function findingUrl(finding: Finding): string | undefined {
 
   const cweMatch = finding.cwe ? /^CWE-(\d+)$/.exec(finding.cwe) : null;
   return cweMatch ? `https://cwe.mitre.org/data/definitions/${cweMatch[1]}.html` : undefined;
+}
+
+// Blob URL prefix ("https://github.com/owner/repo/blob/<sha>") for linking findings to
+// their source lines. On pull requests GITHUB_SHA is the ephemeral merge commit, so the
+// PR head commit is preferred. Returns undefined unless every part looks well-formed.
+export function sourceBaseUrl(
+  env: NodeJS.ProcessEnv = process.env,
+  headSha: string | undefined = pullRequestHeadSha(env),
+): string | undefined {
+  const server = env.GITHUB_SERVER_URL;
+  const repository = env.GITHUB_REPOSITORY;
+  const sha = headSha || env.GITHUB_SHA;
+  if (!server || !isHttpUrl(server)) return undefined;
+  if (!repository || !/^[\w.-]+\/[\w.-]+$/.test(repository)) return undefined;
+  if (!sha || !/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i.test(sha)) return undefined;
+  return `${server.replace(/\/+$/, "")}/${repository}/blob/${sha}`;
+}
+
+export function pullRequestHeadSha(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  if (!env.GITHUB_EVENT_PATH) return undefined;
+  try {
+    const event = JSON.parse(fs.readFileSync(env.GITHUB_EVENT_PATH, "utf-8")) as {
+      pull_request?: { head?: { sha?: unknown } };
+    };
+    const sha = event.pull_request?.head?.sha;
+    return typeof sha === "string" ? sha : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+// Link to the finding's line, or undefined for findings without a safe, relative
+// workspace path (container image layers, absolute paths, "..", "unknown").
+export function sourceUrl(finding: Finding, baseUrl: string | undefined): string | undefined {
+  if (!baseUrl || finding.source?.startsWith("image:")) return undefined;
+  const file = finding.file.startsWith("./") ? finding.file.slice(2) : finding.file;
+  const segments = file.split("/");
+  if (!file || file === "unknown" || file.startsWith("/") || segments.includes("..")) return undefined;
+  const anchor = finding.line > 0 ? `#L${finding.line}` : "";
+  return `${baseUrl}/${segments.map(encodeURIComponent).join("/")}${anchor}`;
 }

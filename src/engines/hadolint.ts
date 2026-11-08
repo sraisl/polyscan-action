@@ -14,6 +14,7 @@ const IGNORED_DIRECTORIES = new Set([".git", "node_modules", "vendor", "build", 
 
 function isDockerfile(name: string): boolean {
   const lower = name.toLowerCase();
+  if (lower.endsWith(".dockerignore")) return false;
   return lower === "dockerfile" || lower.startsWith("dockerfile.") || lower.endsWith(".dockerfile");
 }
 

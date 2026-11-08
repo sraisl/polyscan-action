@@ -2,7 +2,7 @@
 import { EngineResult, Finding, SEVERITY_ORDER, Severity, SeverityCounts, countBySeverity } from "./schema";
 import { GateResult } from "./gate";
 import { EngineName } from "./engines";
-import { findingUrl } from "./links";
+import { findingUrl, sourceUrl } from "./links";
 import { ScanContext } from "./report";
 import { reportedPinnedVersion } from "./tool-versions";
 import pkg from "../package.json";
@@ -172,27 +172,116 @@ function imageSection(findings: Finding[]): string[] {
   return [...lines, ""];
 }
 
-function findingsSection(findings: Finding[]): string[] {
-  if (findings.length === 0) return [];
+// Mermaid labels are quoted strings; keep them to a conservative character set.
+function mermaidLabel(value: string): string {
+  return value.replaceAll(/[^\w .:/-]/g, "_");
+}
 
-  const shown = findings.slice(0, 50);
-  const lines = [
-    "### Findings",
-    "| Sev | Rule | Details | Location | Engine |",
-    "|---|---|---|---|---|",
+function pieChart(title: string, slices: [string, number][]): string[] {
+  return [
+    "```mermaid",
+    `pie showData title ${title}`,
+    ...slices.map(([label, count]) => `    "${mermaidLabel(label)}" : ${count}`),
+    "```",
+    "",
   ];
-  for (const finding of shown) {
-    const cwe = finding.cwe ? ` (${finding.cwe})` : "";
-    lines.push(
-      `| ${SEV_EMOJI[finding.severity]} ${finding.severity} | ` +
-        `${ruleCell(finding)}${cwe} | ${textCell(finding.message)} | ` +
-        `${code(findingLocation(finding))} | ${tableCell(finding.engine)} |`,
-    );
+}
+
+function chartsSection(findings: Finding[], counts: SeverityCounts): string[] {
+  if (findings.length === 0) return [];
+  const byEngine = new Map<string, number>();
+  for (const finding of findings) byEngine.set(finding.engine, (byEngine.get(finding.engine) ?? 0) + 1);
+  return [
+    ...pieChart(
+      "Findings by severity",
+      SEVERITY_ORDER.filter((sev) => counts[sev] > 0).map((sev) => [sev, counts[sev]]),
+    ),
+    ...pieChart(
+      "Findings by engine",
+      [...byEngine.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])),
+    ),
+  ];
+}
+
+const TOP_N = 10;
+const SEV_RANK: Record<Severity, number> = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
+
+function hotspotsSection(findings: Finding[]): string[] {
+  const byFile = new Map<string, Finding[]>();
+  for (const finding of findings) {
+    if (finding.source?.startsWith("image:")) continue;
+    const file = finding.file.startsWith("./") ? finding.file.slice(2) : finding.file;
+    byFile.set(file, [...(byFile.get(file) ?? []), finding]);
   }
-  if (findings.length > shown.length) {
-    lines.push("", `_… and ${findings.length - shown.length} more findings._`);
+  if (byFile.size === 0) return [];
+
+  const lines = ["### 🔥 Hotspots", "", "| File | Findings | Worst | Engines |", "|---|---:|---|---|"];
+  const ranked = [...byFile.entries()].sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]));
+  for (const [file, fileFindings] of ranked.slice(0, TOP_N)) {
+    const worst = fileFindings.reduce((acc, f) => (SEV_RANK[f.severity] < SEV_RANK[acc] ? f.severity : acc), "info" as Severity);
+    const engines = [...new Set(fileFindings.map((f) => f.engine))].sort().join(", ");
+    lines.push(`| ${code(file)} | ${fileFindings.length} | ${SEV_EMOJI[worst]} ${worst} | ${tableCell(engines)} |`);
   }
   return [...lines, ""];
+}
+
+function topRulesSection(findings: Finding[]): string[] {
+  const byRule = new Map<string, { finding: Finding; hits: number }>();
+  for (const finding of findings) {
+    const key = `${finding.engine}\u0000${finding.ruleId}`;
+    const entry = byRule.get(key);
+    if (entry) entry.hits += 1;
+    else byRule.set(key, { finding, hits: 1 });
+  }
+  if (byRule.size === 0) return [];
+
+  const lines = ["### 📋 Top rules", "", "| Rule | Engine | Hits |", "|---|---|---:|"];
+  const ranked = [...byRule.values()].sort(
+    (a, b) => b.hits - a.hits || a.finding.ruleId.localeCompare(b.finding.ruleId),
+  );
+  for (const { finding, hits } of ranked.slice(0, TOP_N)) {
+    lines.push(`| ${ruleCell(finding)} | ${tableCell(finding.engine)} | ${hits} |`);
+  }
+  return [...lines, ""];
+}
+
+function locationCell(finding: Finding, sourceBaseUrl: string | undefined): string {
+  const label = code(findingLocation(finding));
+  const url = sourceUrl(finding, sourceBaseUrl);
+  return url ? `[${label}](<${url}>)` : label;
+}
+
+// Keeps the summary well under GitHub's 1 MiB job summary limit on noisy repositories.
+const MAX_ROWS_PER_SEVERITY = 200;
+
+function findingsSection(findings: Finding[], sourceBaseUrl: string | undefined): string[] {
+  if (findings.length === 0) return [];
+
+  const lines = ["### Findings", ""];
+  for (const severity of SEVERITY_ORDER) {
+    const group = findings.filter((finding) => finding.severity === severity);
+    if (group.length === 0) continue;
+    const open = severity === "critical" || severity === "high" ? " open" : "";
+    lines.push(
+      `<details${open}>`,
+      `<summary>${SEV_EMOJI[severity]} <b>${severity}</b> (${group.length})</summary>`,
+      "",
+      "| Rule | Details | Location | Engine |",
+      "|---|---|---|---|",
+    );
+    for (const finding of group.slice(0, MAX_ROWS_PER_SEVERITY)) {
+      const cwe = finding.cwe ? ` (${finding.cwe})` : "";
+      lines.push(
+        `| ${ruleCell(finding)}${cwe} | ${textCell(finding.message)} | ` +
+          `${locationCell(finding, sourceBaseUrl)} | ${tableCell(finding.engine)} |`,
+      );
+    }
+    if (group.length > MAX_ROWS_PER_SEVERITY) {
+      lines.push("", `_… and ${group.length - MAX_ROWS_PER_SEVERITY} more ${severity} findings (see the SARIF/JSON report)._`);
+    }
+    lines.push("", "</details>", "");
+  }
+  return lines;
 }
 
 function gateSection(gate: GateResult, enforced: boolean): string[] {
@@ -229,16 +318,20 @@ export function renderSummary(
   gateEnforced: boolean,
   engineResults: EngineResult[],
   context?: ScanContext,
+  sourceBaseUrl?: string,
 ): string {
   return [
     "## 🔍 PolyScan Report",
     "",
     ...(context ? contextSection(context) : []),
     ...severitySection(counts),
+    ...chartsSection(findings, counts),
     ...engineSection(engineResults),
+    ...hotspotsSection(findings),
+    ...topRulesSection(findings),
     ...secretsSection(findings),
     ...imageSection(findings),
-    ...findingsSection(findings),
+    ...findingsSection(findings, sourceBaseUrl),
     ...gateSection(gate, gateEnforced),
   ].join("\n");
 }

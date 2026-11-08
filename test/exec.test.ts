@@ -188,6 +188,38 @@ test("ensurePythonTool ignores a preinstalled tool with a different version", as
   }
 });
 
+test("ensurePythonTool creates the venv in isolated mode outside the workspace", async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "polyscan-python-"));
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "polyscan-workspace-"));
+  const record = path.join(directory, "python3-call.txt");
+  const originalPath = process.env.PATH;
+  const originalCwd = process.cwd();
+  try {
+    // A fake python3 records how it was started and fails, so no install runs.
+    const python = path.join(directory, "python3");
+    fs.writeFileSync(python, `#!/bin/sh\nprintf '%s\\n' "$PWD" "$@" > '${record}'\nexit 1\n`);
+    fs.chmodSync(python, 0o755);
+    // A contributor-controlled module that `python3 -m venv` would import from the cwd.
+    fs.writeFileSync(path.join(workspace, "venv.py"), "raise SystemExit('workspace venv.py ran')\n");
+    process.env.PATH = `${directory}:/bin:/usr/bin`;
+    process.chdir(workspace);
+
+    const prepared = await ensurePythonTool("bandit", "1.9.4", "bandit", recordingCore());
+
+    assert.equal(prepared, null);
+    const [cwd, ...args] = fs.readFileSync(record, "utf8").trim().split("\n");
+    assert.deepEqual(args.slice(0, 3), ["-I", "-m", "venv"]);
+    // The private temporary directory has already been removed again by now.
+    assert.match(path.basename(cwd), /^polyscan-bandit-/);
+    assert.notEqual(cwd, fs.realpathSync(workspace));
+  } finally {
+    process.chdir(originalCwd);
+    process.env.PATH = originalPath;
+    fs.rmSync(directory, { recursive: true, force: true });
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
 function textBusy(): NodeJS.ErrnoException {
   const err = new Error("spawn ETXTBSY") as NodeJS.ErrnoException;
   err.code = "ETXTBSY";
@@ -295,4 +327,10 @@ test("resolvePinnedExecutable does not accept hadolint's label with extra words 
   await withFakeTool("hadolint", "Haskell Dockerfile Linter build 2.15.1", async (directory) => {
     assert.equal(await resolvePinnedExecutable("hadolint", "2.15.1", ["--version"], directory), null);
   })();
+});
+
+test("run feeds input to the child's stdin", async () => {
+  const result = await run(process.execPath, ["-e", "process.stdin.pipe(process.stdout)"], { input: "hello sarif" });
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.stdout, "hello sarif");
 });

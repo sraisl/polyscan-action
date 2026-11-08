@@ -13,6 +13,53 @@ tags and must not be reused or moved.
 
 ## [Unreleased]
 
+### Added
+
+- Safe mode for untrusted runs: on a pull request from a fork, PolyScan now skips the engines
+  that act on contributor-controlled code (`spotbugs`, which compiles the target with its own
+  build files and `mvnw`/`gradlew` wrappers, and `trufflehog`, which makes live outbound verification calls). Every other
+  engine still runs and a withheld engine is reported as `skipped`, not `failed`.
+- `allow-risky-engines` input (default `false`) opts back into those engines on untrusted runs.
+- `untrusted-run` and `skipped-risky-engines` outputs expose safe mode's decision.
+- The trust classification and the reason for it are logged on every run, trusted or not, so a
+  misclassified run is visible instead of looking like a run with nothing to withhold.
+
+### Security
+
+- Semgrep and Bandit create their virtual environment with `python3 -I -m venv` from a private temporary
+  directory. Before, `python3 -m venv` ran in the workspace, so a scanned repository's `venv.py` ran instead of
+  the standard library module, also on untrusted runs where safe mode should keep repository code from running.
+- Safe mode treats a `pull_request` whose repository names are blank or not of the form `owner/name` as untrusted.
+- Override the transitive `glob` (14.0.3) and `minimatch` (11.0.4) dependencies of `@actions/artifact` to resolve
+  GHSA-3g3m-2fjr-6pw4 and GHSA-g3hv-75wg-m249.
+
+## [v17.3.0] - 2026-10-29
+
+### Added
+
+- `reviewdog` input (default `false`): reports findings via [reviewdog](https://github.com/reviewdog/reviewdog)
+  v0.21.2, pinned in `tools.lock.json`. On pull requests it posts review comments on added or changed lines; on every
+  run it creates a neutral `PolyScan` check with annotations for all findings. Needs `checks: write` and
+  `pull-requests: write`; failures (missing permissions, fork PRs) only produce a warning. New `github-token` input
+  (default `${{ github.token }}`).
+- Job summary: Mermaid pie charts of findings by severity and by engine, a hotspots table (10 files with the most
+  findings, their worst severity and engines) and a top-rules table (10 most frequent rules).
+
+### Changed
+
+- Job summary: findings are grouped into collapsible sections per severity (critical and high expanded) with up to
+  200 rows each instead of the first 50 findings overall, and each location links to its source line (on pull
+  requests, in the PR head commit).
+
+## [v17.2.2] - 2026-10-28
+
+### Changed
+
+- Updated the pinned scan engine versions in `tools.lock.json`: ESLint 10.13.0, gosec 2.30.0, Kotlin compiler 2.4.21,
+  OpenGrep 1.32.0, Semgrep 1.182.1, SpotBugs 4.10.5, Trivy 0.76.1, TruffleHog 3.99.7 and zizmor 1.31.1.
+
+## [v17.2.1] - 2026-10-26
+
 ### Changed
 
 - hadolint, gosec, zizmor, gitleaks, betterleaks, trufflehog and trivy reuse a binary already on `PATH` only when it
