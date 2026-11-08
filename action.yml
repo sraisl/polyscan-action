@@ -14,6 +14,10 @@ inputs:
     description: "Comma-separated engines to run, or 'all': semgrep,opengrep,bandit,eslint,oxlint,spotbugs,trivy,detekt,gitleaks,betterleaks,gosec,hadolint,zizmor,trufflehog (all excludes opt-in opengrep, eslint and trufflehog)"
     required: false
     default: "all"
+  allow-risky-engines:
+    description: "Run engines that execute repository code or contact third-party APIs (spotbugs, trufflehog) even on pull requests from forks. Leave false unless the workflow is known to handle untrusted code safely."
+    required: false
+    default: "false"
   spotbugs-reuse-build:
     description: "Reuse existing SpotBugs build outputs containing compiled classes instead of rebuilding their modules"
     required: false
@@ -111,9 +115,13 @@ outputs:
   info:
     description: "Number of informational findings"
   engines-passed:
-    description: "'true' if every requested engine completed or was skipped as not applicable"
+    description: "'true' if every requested engine completed, was skipped as not applicable, or was withheld by safe mode"
   failed-engines:
     description: "Comma-separated engines that failed to complete"
+  untrusted-run:
+    description: "'true' if safe mode classified the event as untrusted (a pull_request from a forked repository). This classifies the event, not the checked-out code: a pull_request_target job that checks out the fork head still reports 'false'"
+  skipped-risky-engines:
+    description: "Comma-separated engines that safe mode withheld because the run is untrusted"
   sarif-file:
     description: "Path to the generated SARIF file (if any)"
   sbom-file:

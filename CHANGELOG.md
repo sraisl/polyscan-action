@@ -13,8 +13,23 @@ tags and must not be reused or moved.
 
 ## [Unreleased]
 
+### Added
+
+- Safe mode for untrusted runs: on a pull request from a fork, PolyScan now skips the engines
+  that act on contributor-controlled code (`spotbugs`, which compiles the target with its own
+  build files and `mvnw`/`gradlew` wrappers, and `trufflehog`, which makes live outbound verification calls). Every other
+  engine still runs and a withheld engine is reported as `skipped`, not `failed`.
+- `allow-risky-engines` input (default `false`) opts back into those engines on untrusted runs.
+- `untrusted-run` and `skipped-risky-engines` outputs expose safe mode's decision.
+- The trust classification and the reason for it are logged on every run, trusted or not, so a
+  misclassified run is visible instead of looking like a run with nothing to withhold.
+
 ### Security
 
+- Semgrep and Bandit create their virtual environment with `python3 -I -m venv` from a private temporary
+  directory. Before, `python3 -m venv` ran in the workspace, so a scanned repository's `venv.py` ran instead of
+  the standard library module, also on untrusted runs where safe mode should keep repository code from running.
+- Safe mode treats a `pull_request` whose repository names are blank or not of the form `owner/name` as untrusted.
 - Override the transitive `glob` (14.0.3) and `minimatch` (11.0.4) dependencies of `@actions/artifact` to resolve
   GHSA-3g3m-2fjr-6pw4 and GHSA-g3hv-75wg-m249.
 

@@ -53,6 +53,7 @@ jobs:
 |---|---|---|
 | `target` | `.` | Workspace-contained directory to scan |
 | `engines` | `all` | `all` or comma-separated engines: `semgrep,opengrep,bandit,eslint,oxlint,spotbugs,trivy,detekt,gitleaks,betterleaks,gosec,hadolint,zizmor,trufflehog`. OpenGrep, ESLint and trufflehog are opt-in and are not included by `all`. |
+| `allow-risky-engines` | `false` | Run `spotbugs` and `trufflehog` even on a pull request from a fork — see [Safe mode on untrusted runs](#safe-mode-on-untrusted-runs) |
 | `spotbugs-reuse-build` | `false` | Reuse existing SpotBugs build outputs containing compiled classes instead of rebuilding their modules |
 | `opengrep-config` | `auto` | OpenGrep rules config: `auto`, a local path, URL, or registry ID |
 | `semgrep-exclude-rules` | _(empty)_ | Comma-separated Semgrep rule IDs to exclude; other rules still scan the same files |
@@ -81,8 +82,10 @@ jobs:
 | `total` | Total findings |
 | `critical` / `high` / `medium` / `low` / `info` | Counts per severity |
 | `gate-passed` | `'true'` / `'false'` |
-| `engines-passed` | `'true'` when every requested engine completed or was not applicable |
+| `engines-passed` | `'true'` when every requested engine completed, was not applicable, or was withheld by safe mode |
 | `failed-engines` | Comma-separated engines that failed |
+| `untrusted-run` | `'true'` when safe mode classified the event as untrusted (a `pull_request` from a fork). It classifies the event, not the checked-out code — see [Safe mode on untrusted runs](#safe-mode-on-untrusted-runs) |
+| `skipped-risky-engines` | Comma-separated engines that safe mode withheld |
 | `sarif-file` | Path to the SARIF file |
 | `sbom-file` | Path to the SBOM file |
 | `json-file` | Path to the JSON report |
@@ -140,7 +143,7 @@ action: a missing permission or a read-only token (pull requests from forks) onl
 | **Bandit** | Python | installed via pip on demand |
 | **oxlint** | JS/TS (incl. JSX/TSX) | `no-eval` / `no-implied-eval` / `no-new-func` / `no-script-url` / `react/no-danger`; standalone Linux x64 binary; parses TypeScript natively; runs outside the target so a repository's `oxlint-suppressions.json` cannot hide findings; files it cannot parse or does not lint (minified names such as `*.min.js`, non-lowercase extensions) are listed in the engine note |
 | **ESLint** | JS | opt-in; superseded by oxlint. `no-eval` / `no-implied-eval` / `no-new-func`; its default parser cannot read TypeScript syntax, so `.ts`/`.tsx` files are not scanned |
-| **SpotBugs + FindSecBugs** | Java + Kotlin | **build-aware**: runs `mvn compile` / `gradle classes` when a build file is present (full dependency classpath), else falls back to direct `javac`/`kotlinc` |
+| **SpotBugs + FindSecBugs** | Java + Kotlin | **build-aware**: runs `mvn compile` / `gradle classes` (preferring `./mvnw` / `./gradlew`) for each module with a build file (full dependency classpath), else falls back to direct `javac`/`kotlinc` |
 | **Trivy** | deps + IaC | SCA (vulnerable dependencies / CVEs) + misconfig; binary downloaded on demand |
 | **detekt** | Kotlin | Kotlin-native static analysis (incl. security rules) via detekt CLI; SARIF parsed |
 | **gitleaks** | git history + working tree | Secret / credential detection (API keys, tokens, passwords) via gitleaks CLI; SARIF parsed |
@@ -193,6 +196,54 @@ Replace the placeholders with the full rule IDs from the scan summary. The same 
 trufflehog is opt-in because, unlike every other engine, its verification step makes live network calls to each credential's own provider API to confirm it actually works — a deliberately different (and non-deterministic, network-dependent) posture than the rest of PolyScan's offline scans. No extra token or permission is required: verification authenticates using the discovered credential itself, not a token supplied by PolyScan.
 
 Read-only engines run with bounded concurrency (`max-concurrency`, default `2`). SpotBugs may invoke a project build and therefore runs as a serial barrier: all earlier engines finish before it starts, and later engines start only after it completes.
+
+## Safe mode on untrusted runs
+
+Anyone with a GitHub account can open a pull request from a fork, so on such a run every file in
+the workspace is contributor-controlled. Two engines are unsafe to point at that code:
+
+| Engine | Why it is risky on untrusted input |
+|---|---|
+| `spotbugs` | Compiles the target using its **own build files and wrappers** (`mvn compile`, `gradle classes`, `./mvnw`, `./gradlew`, also from parent directories). A contributor controls those build files, so this executes their code on your runner. |
+| `trufflehog` | Verifies candidate credentials by making **live outbound requests** to third-party provider APIs, driven by content the contributor placed in the repository. |
+
+PolyScan detects these runs and skips those engines by default. Every other engine still runs, the
+scan still produces a report, and a withheld engine is reported as `skipped` (not `failed`) in the
+job summary — so `engines-passed` stays `'true'` and the Quality Gate is still evaluated. The
+`untrusted-run` and `skipped-risky-engines` outputs let a workflow branch on the decision.
+
+A run is treated as **untrusted** only when the event is `pull_request` and the head repository is
+not the base repository. Everything else — `push`, `workflow_dispatch`, `schedule`, a
+`pull_request` between branches of the same repository, and local runs — is trusted and unchanged.
+A `pull_request` event whose head repository cannot be identified (missing or unparsable event
+payload, deleted fork) fails closed and is treated as untrusted.
+
+`schedule`, `workflow_dispatch` and `push` runs are trusted, so the risky engines already run there
+without any opt-in. Only set `allow-risky-engines` in a `pull_request` workflow that is triggered by
+forks and already isolates contributor code by other means, for example an ephemeral runner without
+access to other jobs, caches or networks:
+
+```yaml
+- uses: sraisl/polyscan-action@v17
+  with:
+    allow-risky-engines: "true"
+```
+
+> [!WARNING]
+> `pull_request_target` is reported as **trusted**, because by default it checks out the base ref,
+> which only someone with write access can change. If your workflow overrides that and checks out
+> the pull request head (`ref: ${{ github.event.pull_request.head.sha }}`), the workspace holds
+> untrusted code *and* the job has the base repository's secrets — the most dangerous combination.
+> PolyScan cannot detect that from the event alone; it logs a warning when a `pull_request_target`
+> run comes from a fork. Prefer `pull_request` for scanning contributor code.
+
+> [!WARNING]
+> Other events can also put contributor code into the workspace, and PolyScan treats them as
+> **trusted without a warning**: for example a `workflow_run` job that checks out the head of the
+> triggering pull request, or an `issue_comment` job (such as a `/scan` command) that checks out the
+> commented pull request. The event payload does not say which code the workflow checked out, so
+> PolyScan cannot detect this. In such workflows, leave `spotbugs` and `trufflehog` out of
+> `engines`, or run them only after checking that the pull request comes from this repository.
 
 ## Updating scanner tools
 
