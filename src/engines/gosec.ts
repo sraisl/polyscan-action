@@ -5,7 +5,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import * as tc from "@actions/tool-cache";
 import { Finding, EngineResult, Severity } from "../schema";
-import { run, which } from "../exec";
+import { findPinnedOnPath, run, which } from "../exec";
 import { resolveTarget } from "../target";
 import { cachedTool, downloadVerified } from "../tools";
 import { githubReleaseUrl, TOOLS } from "../tool-versions";
@@ -132,8 +132,9 @@ export function findGoScanRoots(root: string): string[] {
 }
 
 async function ensureGosec(): Promise<string | null> {
-  if (await which("gosec")) return "gosec";
-  core.info(`gosec not found - downloading v${GOSEC.version}...`);
+  const pinned = await findPinnedOnPath("gosec", GOSEC.version, ["-version"], core);
+  if (pinned) return pinned;
+  core.info(`gosec v${GOSEC.version} not found on PATH - downloading...`);
   try {
     return await cachedTool("gosec", GOSEC.version, "gosec", async (directory) => {
       const archive = await downloadVerified(githubReleaseUrl(GOSEC), GOSEC.sha256);

@@ -32,6 +32,7 @@ interface EngineToolModule {
     tool: GithubTool,
     version: string,
   ) => Promise<{ version: string; sha256: string }>;
+  latestGithubVersion: (tool: GithubTool) => Promise<string>;
 }
 
 async function loadEngineTools(): Promise<EngineToolModule> {
@@ -164,5 +165,61 @@ test("resolveGithubUpdate skips the redundant re-download when the digest was co
     assert.equal(fetchCalls, 2);
   } finally {
     globalThis.fetch = originalFetch;
+  }
+});
+
+function stubGithubReleases(latestTag: string, releases: Array<{ tag_name: string; draft?: boolean; prerelease?: boolean }>) {
+  const requested: string[] = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (url: string | URL) => {
+    requested.push(String(url));
+    const json = String(url).endsWith("/releases/latest") ? { tag_name: latestTag } : releases;
+    return { ok: true, status: 200, statusText: "OK", json: async () => json };
+  }) as unknown as typeof fetch;
+  return { requested, restore: () => (globalThis.fetch = originalFetch) };
+}
+
+const MONOREPO_TOOL = {
+  provider: "github" as const,
+  repository: "oxc-project/oxc",
+  tagTemplate: "oxlint_v{version}",
+  assetTemplate: "oxlint-x86_64-unknown-linux-gnu.tar.gz",
+};
+
+test("latestGithubVersion uses the repository latest release when its tag matches", async () => {
+  const { latestGithubVersion } = await loadEngineTools();
+  const stub = stubGithubReleases("oxlint_v1.89.0", []);
+  try {
+    assert.equal(await latestGithubVersion(MONOREPO_TOOL), "1.89.0");
+    assert.equal(stub.requested.length, 1);
+  } finally {
+    stub.restore();
+  }
+});
+
+test("latestGithubVersion skips other monorepo products, drafts and prereleases", async () => {
+  const { latestGithubVersion } = await loadEngineTools();
+  const stub = stubGithubReleases("oxfmt_v0.74.0", [
+    { tag_name: "oxfmt_v0.74.0" },
+    { tag_name: "crates_v0.155.0" },
+    { tag_name: "oxlint_v1.90.0", draft: true },
+    { tag_name: "oxlint_v1.90.0-beta.1", prerelease: true },
+    { tag_name: "oxlint_v1.89.0" },
+    { tag_name: "oxlint_v1.88.0" },
+  ]);
+  try {
+    assert.equal(await latestGithubVersion(MONOREPO_TOOL), "1.89.0");
+  } finally {
+    stub.restore();
+  }
+});
+
+test("latestGithubVersion fails when no release matches the tag template", async () => {
+  const { latestGithubVersion } = await loadEngineTools();
+  const stub = stubGithubReleases("oxfmt_v0.74.0", [{ tag_name: "oxfmt_v0.74.0" }]);
+  try {
+    await assert.rejects(latestGithubVersion(MONOREPO_TOOL), /no stable release of oxc-project\/oxc matches/);
+  } finally {
+    stub.restore();
   }
 });

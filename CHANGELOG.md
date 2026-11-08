@@ -13,11 +13,136 @@ tags and must not be reused or moved.
 
 ## [Unreleased]
 
+### Added
+
+- Safe mode for untrusted runs: on a pull request from a fork, PolyScan now skips the engines
+  that act on contributor-controlled code (`spotbugs`, which compiles the target with its own
+  build files and `mvnw`/`gradlew` wrappers, and `trufflehog`, which makes live outbound verification calls). Every other
+  engine still runs and a withheld engine is reported as `skipped`, not `failed`.
+- `allow-risky-engines` input (default `false`) opts back into those engines on untrusted runs.
+- `untrusted-run` and `skipped-risky-engines` outputs expose safe mode's decision.
+- The trust classification and the reason for it are logged on every run, trusted or not, so a
+  misclassified run is visible instead of looking like a run with nothing to withhold.
+
+### Security
+
+- Semgrep and Bandit create their virtual environment with `python3 -I -m venv` from a private temporary
+  directory. Before, `python3 -m venv` ran in the workspace, so a scanned repository's `venv.py` ran instead of
+  the standard library module, also on untrusted runs where safe mode should keep repository code from running.
+- Safe mode treats a `pull_request` whose repository names are blank or not of the form `owner/name` as untrusted.
+- Override the transitive `glob` (14.0.3) and `minimatch` (11.0.4) dependencies of `@actions/artifact` to resolve
+  GHSA-3g3m-2fjr-6pw4 and GHSA-g3hv-75wg-m249.
+
+## [v17.3.0] - 2026-10-29
+
+### Added
+
+- `reviewdog` input (default `false`): reports findings via [reviewdog](https://github.com/reviewdog/reviewdog)
+  v0.21.2, pinned in `tools.lock.json`. On pull requests it posts review comments on added or changed lines; on every
+  run it creates a neutral `PolyScan` check with annotations for all findings. Needs `checks: write` and
+  `pull-requests: write`; failures (missing permissions, fork PRs) only produce a warning. New `github-token` input
+  (default `${{ github.token }}`).
+- Job summary: Mermaid pie charts of findings by severity and by engine, a hotspots table (10 files with the most
+  findings, their worst severity and engines) and a top-rules table (10 most frequent rules).
+
+### Changed
+
+- Job summary: findings are grouped into collapsible sections per severity (critical and high expanded) with up to
+  200 rows each instead of the first 50 findings overall, and each location links to its source line (on pull
+  requests, in the PR head commit).
+
+## [v17.2.2] - 2026-10-28
+
+### Changed
+
+- Updated the pinned scan engine versions in `tools.lock.json`: ESLint 10.13.0, gosec 2.30.0, Kotlin compiler 2.4.21,
+  OpenGrep 1.32.0, Semgrep 1.182.1, SpotBugs 4.10.5, Trivy 0.76.1, TruffleHog 3.99.7 and zizmor 1.31.1.
+
+## [v17.2.1] - 2026-10-26
+
+### Changed
+
+- hadolint, gosec, zizmor, gitleaks, betterleaks, trufflehog and trivy reuse a binary already on `PATH` only when it
+  reports the version pinned in `tools.lock.json`, as oxlint, OpenGrep, Semgrep and Bandit already did. A different
+  version is ignored with the warning `Ignoring <tool> from PATH because it is not the pinned version <version>`,
+  and the pinned release is downloaded and verified instead. Scan results no longer depend on a scanner preinstalled
+  on the runner image, and the pinned version shown in the reports is the one that ran.
+
+## [v17.2.0] - 2026-10-25
+
+### Added
+
+- New JSON report `polyscan-report.json` (input `json-report`, default `true`; output `json-file`) with the scan
+  context, Quality Gate thresholds and result, per-engine status, pinned tool version (`pinnedVersion`, only for
+  engines that ran successfully), duration and severity counts, and all findings. It is included in the uploaded
+  artifact.
+- The job summary shows the scanned target, commit, total duration and PolyScan version. The engine list is now a
+  table with each engine's pinned tool version, duration and findings per severity. The Quality Gate section lists
+  found vs. allowed counts per gated severity.
+- SARIF rules carry `security`/CWE tags and, when all of a rule's findings agree, `security-severity`, a default
+  level and `helpUri`, so GitHub Code Scanning shows severities and links to rule documentation. Pinned engine
+  versions are listed under `tool.extensions` and engine failures or skip reasons under `invocations`; the run counts
+  as unsuccessful only when engines failed and none succeeded.
+
+### Security
+
+- Report files (`polyscan.sarif`, `polyscan.sbom.json`, `polyscan-report.json`, `polyscan-summary.md`) are no
+  longer written through a symlink. A repository could check in a symlink with a report's name that points outside
+  the workspace, and the write followed it and overwrote the target. PolyScan now fails with
+  `refusing to write report through symlink` instead.
+- Bundled `undici` raised to 6.29.1 (GHSA-4qv8-2p9j-2685, GHSA-xjj6-f33q-929c: denial of service via the
+  EventSource parser and excessive content-encodings).
+
+## [v17.1.0] - 2026-10-23
+
+### Added
+
+- New `artifact-name` input (default `polyscan-reports`) to choose the name of the uploaded report
+  artifact, e.g. one name per matrix leg.
+
+### Fixed
+
+- The report upload no longer fails with `(409) Conflict: an artifact with this name already
+  exists on the workflow run` when PolyScan runs more than once in a workflow run (matrix legs,
+  several jobs or steps). If the requested name is taken, the upload falls back to
+  `<name>-<job>` and then to `<name>-<job>-<random>`; the log names the artifact actually used.
+
+## [v17.0.1] - 2026-10-22
+
+### Fixed
+
+- A scan no longer crashes with `Error: spawn ETXTBSY` when several engines download their tools
+  at the same time. Starting a freshly installed binary can briefly fail while another concurrently
+  started process still holds it open for writing; PolyScan now retries the start. Previously the
+  error escaped as an unhandled rejection from `@actions/exec` and aborted the whole action.
+
+## [v17.0.0] - 2026-10-22
+
+### Added
+
+- New `oxlint` engine for JavaScript/TypeScript (including JSX/TSX). It runs `no-eval`,
+  `no-implied-eval`, `no-new-func`, `no-script-url` and `react/no-danger` from a pinned,
+  SHA-256-verified standalone binary, is skipped when no JS/TS files are present, and reports
+  files it cannot parse or does not lint (minified names, non-lowercase extensions) in the engine
+  note instead of dropping them silently. It runs outside the scanned target, so a repository's
+  `oxlint-suppressions.json` cannot hide findings.
+
+### Changed
+
+- `engines: "all"` now runs `oxlint` instead of `eslint`. ESLint stays available as an opt-in
+  engine (`engines: "eslint,..."`) but its default parser cannot read TypeScript syntax, so it
+  never reported findings in `.ts`/`.tsx` files. Findings now carry `oxlint/<rule>` rule IDs, so
+  existing code scanning alerts from `eslint/<rule>` close and reopen under the new IDs.
+- `npm run engines:check` finds the latest release of a tool in a monorepo that publishes several
+  products (such as `oxc-project/oxc`) by matching the tool's tag template.
+
 ### Fixed
 
 - Bandit and Semgrep reuse a preinstalled executable only when it reports the version pinned in
   `tools.lock.json`. A runner with a different version installed now gets the pinned release in an
   isolated environment instead, so scan results stay reproducible.
+- The SARIF driver and the CycloneDX SBOM tool entry report the release version (`17.0.0`)
+  instead of the placeholder `1.0.0` from `package.json`.
 
 ## [v16.1.0] - 2026-09-25
 

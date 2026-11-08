@@ -1,5 +1,35 @@
 # Security Policy
 
+## Running PolyScan on untrusted code
+
+Anyone with a GitHub account can open a pull request from a fork, so on such a run every file in
+the workspace — including build files — is contributor-controlled.
+
+PolyScan classifies a run as **untrusted** when the event is `pull_request` and the head repository
+is not the base repository, and then skips the engines that would act on that code:
+
+- **`spotbugs`** compiles the target with its own `mvn` / `gradle` build files and runs a checked-in
+  `mvnw` / `gradlew` wrapper (also one in a parent directory up to the workspace root), which
+  executes contributor-controlled code on the runner.
+- **`trufflehog`** makes live outbound requests to third-party provider APIs to verify candidate
+  credentials found in the repository.
+
+A `pull_request` whose head repository cannot be identified (missing, unparsable, or incomplete
+event payload) fails closed and is treated as untrusted. Setting `allow-risky-engines: true`
+disables this protection; only use it for workflows that do not scan contributor-supplied code.
+
+`pull_request_target` is treated as trusted because it checks out the base ref by default. A
+workflow that overrides the checkout to the pull request head combines untrusted code with the
+base repository's secrets; PolyScan cannot detect that from the event, so it logs a warning
+instead. Prefer `pull_request` for scanning contributor code.
+
+Other events are treated as trusted without a warning, even when the workflow checks out
+contributor code: for example a `workflow_run` job that checks out the head of the triggering pull
+request, or an `issue_comment` job (such as a `/scan` command) that checks out the commented pull
+request. The event payload does not say which code was checked out, so PolyScan cannot detect this.
+Such workflows must leave `spotbugs` and `trufflehog` out of `engines`, or run them only after
+checking that the pull request comes from this repository.
+
 ## Supported Versions
 
 Only the [latest release](../../releases/latest) is actively supported. Please upgrade before

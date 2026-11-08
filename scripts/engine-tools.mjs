@@ -146,14 +146,40 @@ export async function githubAssetDigest(release, assetName) {
   return { asset, sha256: downloaded.sha256, verified: false };
 }
 
+function matchesTemplate(template, value) {
+  try {
+    extractVersion(template, value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Monorepos such as oxc-project/oxc publish several products from one repository, so the
+// repository-wide "latest" release can belong to another product (oxfmt_v…, crates_v…).
+// Fall back to the newest stable release whose tag matches this tool's template.
+export async function latestGithubVersion(tool) {
+  const latest = await fetchJson(`https://api.github.com/repos/${tool.repository}/releases/latest`);
+  if (matchesTemplate(tool.tagTemplate, latest.tag_name)) {
+    return extractVersion(tool.tagTemplate, latest.tag_name);
+  }
+  const releases = await fetchJson(
+    `https://api.github.com/repos/${tool.repository}/releases?per_page=100`,
+  );
+  const release = releases.find(
+    (candidate) =>
+      !candidate.draft && !candidate.prerelease && matchesTemplate(tool.tagTemplate, candidate.tag_name),
+  );
+  if (!release) {
+    throw new Error(`no stable release of ${tool.repository} matches template "${tool.tagTemplate}"`);
+  }
+  return extractVersion(tool.tagTemplate, release.tag_name);
+}
+
 async function latestVersion(tool) {
   switch (tool.provider) {
-    case "github": {
-      const release = await fetchJson(
-        `https://api.github.com/repos/${tool.repository}/releases/latest`,
-      );
-      return extractVersion(tool.tagTemplate, release.tag_name);
-    }
+    case "github":
+      return latestGithubVersion(tool);
     case "pypi": {
       const metadata = await fetchJson(`https://pypi.org/pypi/${tool.package}/json`);
       return metadata.info.version;

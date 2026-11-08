@@ -1,6 +1,6 @@
 # PolyScan Action
 
-**Multi-language SAST as a native GitHub Action.** One step runs all configured security engines — Semgrep, OpenGrep, Bandit, ESLint, SpotBugs, detekt, gosec, Trivy, gitleaks, betterleaks, hadolint and zizmor — normalizes every result into a single schema, enforces a configurable **Quality Gate**, and emits **SARIF**, a **CycloneDX SBOM** and a rich **job summary** — plus optional artifact upload.
+**Multi-language SAST as a native GitHub Action.** One step runs all configured security engines — Semgrep, OpenGrep, Bandit, oxlint, ESLint, SpotBugs, detekt, gosec, Trivy, gitleaks, betterleaks, hadolint and zizmor — normalizes every result into a single schema, enforces a configurable **Quality Gate**, and emits **SARIF**, a **CycloneDX SBOM**, a **JSON report** and a rich **job summary** — plus optional artifact upload.
 
 Written in TypeScript, bundled with `@vercel/ncc`, runs as a native GitHub Action on the `node24` runtime.
 
@@ -17,6 +17,8 @@ on: [push, pull_request]
 permissions:
   contents: read
   security-events: write   # only needed for upload-sarif
+  checks: write            # only needed for reviewdog
+  pull-requests: write     # only needed for reviewdog
 
 jobs:
   sast:
@@ -24,10 +26,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: sraisl/polyscan-action@v16
+      - uses: sraisl/polyscan-action@v17
         with:
           target: "."
-          engines: "semgrep,bandit,eslint,spotbugs"
+          engines: "semgrep,bandit,oxlint,spotbugs"
           max-critical: "0"
           max-high: "0"
           max-medium: "50"
@@ -36,6 +38,7 @@ jobs:
           sarif: "true"
           sbom: "true"
           upload-artifacts: "true"
+          reviewdog: "true"
 
       # optional: push SARIF into GitHub Code Scanning
       - if: always()
@@ -49,7 +52,9 @@ jobs:
 | Input | Default | Description |
 |---|---|---|
 | `target` | `.` | Workspace-contained directory to scan |
-| `engines` | `all` | `all` or comma-separated engines: `semgrep,opengrep,bandit,eslint,spotbugs,trivy,detekt,gitleaks,betterleaks,gosec,hadolint,zizmor,trufflehog`. OpenGrep and trufflehog are opt-in and are not included by `all`. |
+| `engines` | `all` | `all` or comma-separated engines: `semgrep,opengrep,bandit,eslint,oxlint,spotbugs,trivy,detekt,gitleaks,betterleaks,gosec,hadolint,zizmor,trufflehog`. OpenGrep, ESLint and trufflehog are opt-in and are not included by `all`. |
+| `allow-risky-engines` | `false` | Run `spotbugs` and `trufflehog` even on a pull request from a fork — see [Safe mode on untrusted runs](#safe-mode-on-untrusted-runs) |
+| `spotbugs-reuse-build` | `false` | Reuse existing SpotBugs build outputs containing compiled classes instead of rebuilding their modules |
 | `opengrep-config` | `auto` | OpenGrep rules config: `auto`, a local path, URL, or registry ID |
 | `semgrep-exclude-rules` | _(empty)_ | Comma-separated Semgrep rule IDs to exclude; other rules still scan the same files |
 | `opengrep-exclude-rules` | _(empty)_ | Comma-separated OpenGrep rule IDs to exclude; other rules still scan the same files |
@@ -61,8 +66,12 @@ jobs:
 | `fail-on-engine-error` | `true` | Fail after reports are written if a requested engine cannot complete |
 | `sarif` | `true` | Write `polyscan.sarif` (SARIF 2.1.0) |
 | `sbom` | `false` | Write `polyscan.sbom.json` (CycloneDX 1.5) |
-| `upload-artifacts` | `true` | Upload SARIF + SBOM + summary as a workflow artifact |
+| `json-report` | `true` | Write `polyscan-report.json` (scan context, engine status and all findings; see [Reports](#reports)) |
+| `upload-artifacts` | `true` | Upload SARIF + SBOM + JSON report + summary as a workflow artifact |
+| `artifact-name` | `polyscan-reports` | Artifact name; falls back to `<name>-<job>`, then `<name>-<job>-<random>`, if the name is already taken in the workflow run (matrix, several PolyScan steps) |
 | `upload-sarif` | `false` | Emit a hint to upload SARIF to code scanning (use the CodeQL step) |
+| `reviewdog` | `false` | Report findings via [reviewdog](#pr-review-comments-reviewdog): inline comments on changed lines of pull requests and a `PolyScan` check with annotations. Needs `checks: write` and `pull-requests: write` |
+| `github-token` | `${{ github.token }}` | Token reviewdog uses to post review comments and checks |
 | `trivy-image` | _(empty)_ | Docker image to scan with `trivy image` (e.g. `myapp:latest`). Image must be available in the local Docker daemon. Runs in addition to the filesystem scan. |
 | `output-dir` | `.` | Workspace-contained directory for generated reports |
 
@@ -73,10 +82,57 @@ jobs:
 | `total` | Total findings |
 | `critical` / `high` / `medium` / `low` / `info` | Counts per severity |
 | `gate-passed` | `'true'` / `'false'` |
-| `engines-passed` | `'true'` when every requested engine completed or was not applicable |
+| `engines-passed` | `'true'` when every requested engine completed, was not applicable, or was withheld by safe mode |
 | `failed-engines` | Comma-separated engines that failed |
+| `untrusted-run` | `'true'` when safe mode classified the event as untrusted (a `pull_request` from a fork). It classifies the event, not the checked-out code — see [Safe mode on untrusted runs](#safe-mode-on-untrusted-runs) |
+| `skipped-risky-engines` | Comma-separated engines that safe mode withheld |
 | `sarif-file` | Path to the SARIF file |
 | `sbom-file` | Path to the SBOM file |
+| `json-file` | Path to the JSON report |
+
+## Reports
+
+All report files are written to `output-dir`.
+
+The engine version in the reports is the version pinned in `tools.lock.json`, shown only for engines that ran
+successfully. PolyScan reuses a scanner already on `PATH` only when it reports exactly that version, so the pinned
+version is also the one that ran.
+
+- **Job summary** (`polyscan-summary.md`, also shown on the workflow run page): scanned target, commit and ref, total
+  duration and PolyScan version; Mermaid pie charts of the findings by severity and by engine; per engine the status,
+  pinned tool version, duration, findings per severity and any note (why it was skipped or failed); the 10 files with
+  the most findings (hotspots) and the 10 most frequent rules; secrets and container-image findings in their own
+  tables; all findings in collapsible sections per severity (critical and high expanded, up to 200 rows each), each
+  location linked to its source line (on pull requests, in the PR head commit); and the Quality Gate as a table of
+  found vs. allowed counts per gated severity.
+- **SARIF** (`polyscan.sarif`): one rule per `engine/ruleId` with `security` and `external/cwe/cwe-N` tags. When all
+  findings of a rule share one severity, the rule also carries `security-severity` and a default level, so Code
+  Scanning shows critical/high/medium/low; when they share one documentation link, it carries that as `helpUri`.
+  Rules whose findings disagree (for example Trivy's fallback `TRIVY-VULN`) get neither, and each alert keeps its own
+  level. Pinned engine versions and run status are listed under `tool.extensions`, and engine failures or skip reasons
+  under `invocations[0].toolExecutionNotifications`. The run is marked `executionSuccessful: false` only when engines
+  failed and none succeeded, so one failing engine does not discard the findings of the others. PolyScan sets no
+  `partialFingerprints`: `github/codeql-action/upload-sarif` computes `primaryLocationLineHash` from the source when
+  it uploads the file, which is what Code Scanning uses to track alerts across runs. If you upload the SARIF through
+  the REST API instead, that hash is missing and alerts may be duplicated.
+- **JSON report** (`polyscan-report.json`, `schemaVersion: 1`): for further processing in scripts and dashboards.
+  Contains `tool`, `scan` (target, requested engines, concurrency, start time, duration and the GitHub repository,
+  ref, SHA, workflow, job and run URL), `gate` (enforced, passed, thresholds, reasons), `counts`, `engines` (status,
+  `pinnedVersion`, duration, counts per severity, note) and every normalized `finding` without the job summary's row limit.
+
+## PR review comments (reviewdog)
+
+With `reviewdog: "true"`, PolyScan downloads [reviewdog](https://github.com/reviewdog/reviewdog) (pinned and
+SHA-256-verified in `tools.lock.json`) and reports the findings to GitHub:
+
+- **Pull requests** (`pull_request`, `pull_request_target`): review comments on the lines the PR adds or changes
+  (`-filter-mode=added`), so findings that already existed don't flood the review. Comments that are already on
+  the PR are not posted again.
+- **Every run**: a `PolyScan` check with an annotation for every finding, shown in the PR's *Files changed* tab and
+  on the commit. The check concludes as *neutral*; whether the job fails is still decided by the Quality Gate.
+
+Container image findings (`trivy-image`) have no source location and are left out. reviewdog never fails the
+action: a missing permission or a read-only token (pull requests from forks) only produces a warning.
 
 ## Engines
 
@@ -85,8 +141,9 @@ jobs:
 | **Semgrep** | many | `--config auto` |
 | **OpenGrep** | many | opt-in; standalone, pinned Linux x64 binary; configurable via `opengrep-config` |
 | **Bandit** | Python | installed via pip on demand |
-| **ESLint** | JS/TS | `no-eval` / `no-implied-eval` / `no-new-func` |
-| **SpotBugs + FindSecBugs** | Java + Kotlin | **build-aware**: runs `mvn compile` / `gradle classes` when a build file is present (full dependency classpath), else falls back to direct `javac`/`kotlinc` |
+| **oxlint** | JS/TS (incl. JSX/TSX) | `no-eval` / `no-implied-eval` / `no-new-func` / `no-script-url` / `react/no-danger`; standalone Linux x64 binary; parses TypeScript natively; runs outside the target so a repository's `oxlint-suppressions.json` cannot hide findings; files it cannot parse or does not lint (minified names such as `*.min.js`, non-lowercase extensions) are listed in the engine note |
+| **ESLint** | JS | opt-in; superseded by oxlint. `no-eval` / `no-implied-eval` / `no-new-func`; its default parser cannot read TypeScript syntax, so `.ts`/`.tsx` files are not scanned |
+| **SpotBugs + FindSecBugs** | Java + Kotlin | **build-aware**: runs `mvn compile` / `gradle classes` (preferring `./mvnw` / `./gradlew`) for each module with a build file (full dependency classpath), else falls back to direct `javac`/`kotlinc` |
 | **Trivy** | deps + IaC | SCA (vulnerable dependencies / CVEs) + misconfig; binary downloaded on demand |
 | **detekt** | Kotlin | Kotlin-native static analysis (incl. security rules) via detekt CLI; SARIF parsed |
 | **gitleaks** | git history + working tree | Secret / credential detection (API keys, tokens, passwords) via gitleaks CLI; SARIF parsed |
@@ -96,9 +153,9 @@ jobs:
 | **zizmor** | GitHub Actions workflows | Workflow security (dangerous triggers, template-injection, unpinned actions, excessive permissions, credential persistence); standalone Linux x64 binary; runs `--offline`; SARIF parsed natively |
 | **trufflehog** | any file | opt-in; secret detection with **live verification** — confirms a found credential actually works against its own provider API (AWS, GitHub, Slack, ...) instead of only pattern-matching; verified secrets are reported as `critical`, unverified as `high` |
 
-Python engines are installed into isolated, version-pinned environments. OpenGrep does not require Python: PolyScan uses the exact pinned executable from `PATH` when available, otherwise it downloads and caches a SHA-256-verified standalone binary. Other downloaded tools are also cached and verified with SHA-256. SpotBugs is **build-aware** — for real Java/Kotlin projects it invokes the project's own build (Maven/Gradle) so the full dependency classpath is available, which is required to detect data-flow bugs (SQLi, command injection) on **Java** (FindSecBugs does not target Kotlin bytecode). For **Kotlin** code-security use **detekt**, which analyzes Kotlin source natively. gosec is downloaded only when Go files are present and requires the Go toolchain available on the runner. Trivy runs `--offline-scan` to avoid Maven Central rate limits.
+Python engines are installed into isolated, version-pinned environments. OpenGrep does not require Python: PolyScan uses the exact pinned executable from `PATH` when available, otherwise it downloads and caches a SHA-256-verified standalone binary. The same applies to every other downloaded tool (oxlint, trivy, gitleaks, betterleaks, gosec, hadolint, zizmor, trufflehog): a binary on `PATH` is used only when it reports the version pinned in `tools.lock.json`; otherwise PolyScan installs the pinned release, cached and verified with SHA-256. SpotBugs is **build-aware** — for real Java/Kotlin projects it invokes the project's own build (Maven/Gradle) so the full dependency classpath is available, which is required to detect data-flow bugs (SQLi, command injection) on **Java** (FindSecBugs does not target Kotlin bytecode). For **Kotlin** code-security use **detekt**, which analyzes Kotlin source natively. gosec is downloaded only when Go files are present and requires the Go toolchain available on the runner. Trivy runs `--offline-scan` to avoid Maven Central rate limits.
 
-**Default: `engines: "all"` expands to** `semgrep,bandit,eslint,spotbugs,trivy,detekt,gitleaks,betterleaks,gosec,hadolint,zizmor`. Each language-specific engine (gosec, detekt, hadolint, zizmor, …) runs a quick file-presence check and is skipped with no findings and no download when its file type isn't present, so `all` stays cheap on repositories that don't use that language. OpenGrep and trufflehog are explicit opt-ins and can be selected with `engines: "opengrep,trufflehog"` or combined with other engines.
+**Default: `engines: "all"` expands to** `semgrep,bandit,oxlint,spotbugs,trivy,detekt,gitleaks,betterleaks,gosec,hadolint,zizmor`. Each language-specific engine (oxlint, gosec, detekt, hadolint, zizmor, …) runs a quick file-presence check and is skipped with no findings and no download when its file type isn't present, so `all` stays cheap on repositories that don't use that language. OpenGrep, ESLint and trufflehog are explicit opt-ins and can be selected with `engines: "opengrep,trufflehog"` or combined with other engines.
 
 `opengrep-config: "auto"` loads OpenGrep's automatic rules configuration and can require network access. Use a repository-local rule file, for example `opengrep-config: ".opengrep/rules.yml"`, for deterministic and offline-friendly scans.
 
@@ -108,7 +165,7 @@ rule for a workflow that intentionally uses version tags such as `actions/checko
 Copy that full ID into `semgrep-exclude-rules`:
 
 ```yaml
-- uses: sraisl/polyscan-action@v16
+- uses: sraisl/polyscan-action@v17
   with:
     engines: "semgrep,opengrep"
     opengrep-config: "auto"
@@ -140,6 +197,54 @@ trufflehog is opt-in because, unlike every other engine, its verification step m
 
 Read-only engines run with bounded concurrency (`max-concurrency`, default `2`). SpotBugs may invoke a project build and therefore runs as a serial barrier: all earlier engines finish before it starts, and later engines start only after it completes.
 
+## Safe mode on untrusted runs
+
+Anyone with a GitHub account can open a pull request from a fork, so on such a run every file in
+the workspace is contributor-controlled. Two engines are unsafe to point at that code:
+
+| Engine | Why it is risky on untrusted input |
+|---|---|
+| `spotbugs` | Compiles the target using its **own build files and wrappers** (`mvn compile`, `gradle classes`, `./mvnw`, `./gradlew`, also from parent directories). A contributor controls those build files, so this executes their code on your runner. |
+| `trufflehog` | Verifies candidate credentials by making **live outbound requests** to third-party provider APIs, driven by content the contributor placed in the repository. |
+
+PolyScan detects these runs and skips those engines by default. Every other engine still runs, the
+scan still produces a report, and a withheld engine is reported as `skipped` (not `failed`) in the
+job summary — so `engines-passed` stays `'true'` and the Quality Gate is still evaluated. The
+`untrusted-run` and `skipped-risky-engines` outputs let a workflow branch on the decision.
+
+A run is treated as **untrusted** only when the event is `pull_request` and the head repository is
+not the base repository. Everything else — `push`, `workflow_dispatch`, `schedule`, a
+`pull_request` between branches of the same repository, and local runs — is trusted and unchanged.
+A `pull_request` event whose head repository cannot be identified (missing or unparsable event
+payload, deleted fork) fails closed and is treated as untrusted.
+
+`schedule`, `workflow_dispatch` and `push` runs are trusted, so the risky engines already run there
+without any opt-in. Only set `allow-risky-engines` in a `pull_request` workflow that is triggered by
+forks and already isolates contributor code by other means, for example an ephemeral runner without
+access to other jobs, caches or networks:
+
+```yaml
+- uses: sraisl/polyscan-action@v17
+  with:
+    allow-risky-engines: "true"
+```
+
+> [!WARNING]
+> `pull_request_target` is reported as **trusted**, because by default it checks out the base ref,
+> which only someone with write access can change. If your workflow overrides that and checks out
+> the pull request head (`ref: ${{ github.event.pull_request.head.sha }}`), the workspace holds
+> untrusted code *and* the job has the base repository's secrets — the most dangerous combination.
+> PolyScan cannot detect that from the event alone; it logs a warning when a `pull_request_target`
+> run comes from a fork. Prefer `pull_request` for scanning contributor code.
+
+> [!WARNING]
+> Other events can also put contributor code into the workspace, and PolyScan treats them as
+> **trusted without a warning**: for example a `workflow_run` job that checks out the head of the
+> triggering pull request, or an `issue_comment` job (such as a `/scan` command) that checks out the
+> commented pull request. The event payload does not say which code the workflow checked out, so
+> PolyScan cannot detect this. In such workflows, leave `spotbugs` and `trufflehog` out of
+> `engines`, or run them only after checking that the pull request comes from this repository.
+
 ## Updating scanner tools
 
 Scanner and helper-tool versions are pinned centrally in `tools.lock.json`.
@@ -166,6 +271,10 @@ npm run build      # bundles src/main.ts -> dist/index.js (must be committed)
 
 > The `dist/` folder is committed on purpose — GitHub runs the bundled `dist/index.js` directly.
 
+With [mise](https://mise.jdx.dev/) and [just](https://just.systems/) installed, `mise.toml` pins Node.js 24 and
+`just dist` runs the same steps (`npm ci`, typecheck, tests, build) under that Node version, also when started from
+an IDE. Keep `mise.toml` aligned with `.nvmrc` and `engines.node` in `package.json`.
+
 ## Third-party tools & licenses
 
 PolyScan itself is MIT-licensed, and its bundled `dist/index.js` only pulls in permissively
@@ -174,15 +283,15 @@ MIT, Apache-2.0, ISC, BSD-3-Clause, BlueOak-1.0.0, 0BSD, and CC0; that file, not
 the authoritative list). The scan engines below are **not** bundled or vendored: PolyScan installs
 each one from its official distribution channel at scan time and invokes it as a separate
 subprocess — PolyScan never links against or redistributes their code. Binary/archive downloads
-(betterleaks, detekt, gitleaks, gosec, hadolint, the Kotlin compiler, opengrep, SpotBugs/FindSecBugs, Trivy,
-trufflehog, zizmor) are SHA-256-verified against `tools.lock.json`; Semgrep and Bandit are
+(betterleaks, detekt, gitleaks, gosec, hadolint, the Kotlin compiler, opengrep, oxlint, reviewdog, SpotBugs/FindSecBugs,
+Trivy, trufflehog, zizmor) are SHA-256-verified against `tools.lock.json`; Semgrep and Bandit are
 installed via `pip install <tool>==<version>` and ESLint via `npm install eslint@<version>`,
 pinned to an exact version but relying on PyPI/npm registry integrity rather than PolyScan's own
 checksum verification.
 
 | Engine | License |
 |---|---|
-| ESLint, gitleaks, betterleaks, zizmor | MIT |
+| oxlint, ESLint, gitleaks, betterleaks, zizmor, reviewdog | MIT |
 | Bandit, gosec, detekt, Kotlin compiler, Trivy | Apache-2.0 |
 | Semgrep, OpenGrep, SpotBugs | LGPL-2.1 |
 | FindSecBugs | LGPL-3.0 |
@@ -199,7 +308,7 @@ maintains its own unrestricted rule set for exactly this reason.
 
 ## Versioning
 
-Releases are tagged as semver (`vX.Y.Z`) with a floating major tag (e.g. `v16`) that always points at the latest `v16.x.y` — pin `@v16` for automatic minor/patch updates, or pin an exact `@vX.Y.Z`. Tags `v1` through `v15` predate this scheme (plain incrementing integers, not semver) and are kept as-is for existing consumers; the new scheme starts at `v16` precisely to avoid colliding with any of them. New usage should pin `@v16` or later. See [CHANGELOG.md](CHANGELOG.md).
+Releases are tagged as semver (`vX.Y.Z`) with a floating major tag (e.g. `v16`) that always points at the latest `v16.x.y` — pin `@v16` for automatic minor/patch updates, or pin an exact `@vX.Y.Z`. Tags `v1` through `v15` predate this scheme (plain incrementing integers, not semver) and are kept as-is for existing consumers; the new scheme starts at `v16` precisely to avoid colliding with any of them. New usage should pin `@v17` or later. See [CHANGELOG.md](CHANGELOG.md).
 
 ## Releasing
 

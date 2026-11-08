@@ -1,0 +1,4 @@
+{
+  "src/vuln.ts": { "no-eval": { "count": 1 } },
+  "vuln.js": { "no-eval": { "count": 1 } }
+}

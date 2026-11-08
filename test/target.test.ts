@@ -8,6 +8,7 @@ import {
   normalizeFindingPath,
   resolveOutputDir,
   resolveTarget,
+  writeReportFile,
 } from "../src/target";
 
 function withWorkspace(run: (workspace: string) => void): void {
@@ -110,6 +111,32 @@ test("normalizeFindingPath rejects paths outside the workspace", () => {
         () => normalizeFindingPath("escape/missing.ts", target),
         /inside GITHUB_WORKSPACE/,
       );
+    } finally {
+      fs.rmSync(outside, { recursive: true, force: true });
+    }
+  });
+});
+
+test("writeReportFile creates and truncates regular report files", () => {
+  withWorkspace((workspace) => {
+    const report = path.join(workspace, "polyscan-report.json");
+    writeReportFile(report, "first, longer content");
+    writeReportFile(report, "second");
+    assert.equal(fs.readFileSync(report, "utf8"), "second");
+  });
+});
+
+test("writeReportFile refuses a report symlink and leaves its external target unchanged", () => {
+  withWorkspace((workspace) => {
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), "polyscan-outside-"));
+    try {
+      const victim = path.join(outside, "victim.txt");
+      fs.writeFileSync(victim, "original");
+      const report = path.join(workspace, "polyscan-report.json");
+      fs.symlinkSync(victim, report);
+
+      assert.throws(() => writeReportFile(report, "overwritten"), /refusing to write report through symlink/);
+      assert.equal(fs.readFileSync(victim, "utf8"), "original");
     } finally {
       fs.rmSync(outside, { recursive: true, force: true });
     }
