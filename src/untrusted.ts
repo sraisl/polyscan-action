@@ -28,8 +28,13 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
+// GitHub repository names are "owner/name"; anything else (blank, whitespace,
+// no slash) cannot identify a repository and must not count as a match.
+const FULL_NAME_PATTERN = /^[^/\s]+\/[^/\s]+$/;
+
 function repoFullName(repo: Record<string, unknown> | undefined): string | undefined {
-  return typeof repo?.full_name === "string" ? repo.full_name : undefined;
+  const name = repo?.full_name;
+  return typeof name === "string" && FULL_NAME_PATTERN.test(name) ? name : undefined;
 }
 
 /**

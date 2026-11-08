@@ -26,6 +26,10 @@ tags and must not be reused or moved.
 
 ### Security
 
+- Semgrep and Bandit create their virtual environment with `python3 -I -m venv` from a private temporary
+  directory. Before, `python3 -m venv` ran in the workspace, so a scanned repository's `venv.py` ran instead of
+  the standard library module, also on untrusted runs where safe mode should keep repository code from running.
+- Safe mode treats a `pull_request` whose repository names are blank or not of the form `owner/name` as untrusted.
 - Override the transitive `glob` (14.0.3) and `minimatch` (11.0.4) dependencies of `@actions/artifact` to resolve
   GHSA-3g3m-2fjr-6pw4 and GHSA-g3hv-75wg-m249.
 

@@ -97,6 +97,16 @@ test("a pull_request whose head repository was deleted fails closed", () => {
   assert.equal(trust.untrusted, true);
 });
 
+test("a pull_request with blank or malformed repository names fails closed", () => {
+  for (const name of ["", "   ", "acme", "acme/", "/app", "acme/app/extra", "acme /app"]) {
+    const trust = isUntrustedRun(
+      { GITHUB_EVENT_NAME: "pull_request" },
+      pullRequestPayload({ full_name: name, fork: false }, { full_name: name }),
+    );
+    assert.equal(trust.untrusted, true, `expected fail-closed for full_name ${JSON.stringify(name)}`);
+  }
+});
+
 test("a pull_request payload of the wrong shape fails closed", () => {
   for (const payload of ["a string", 42, null, [], { pull_request: [] }, { pull_request: "x" }]) {
     assert.equal(

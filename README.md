@@ -82,9 +82,9 @@ jobs:
 | `total` | Total findings |
 | `critical` / `high` / `medium` / `low` / `info` | Counts per severity |
 | `gate-passed` | `'true'` / `'false'` |
-| `engines-passed` | `'true'` when every requested engine completed or was not applicable |
+| `engines-passed` | `'true'` when every requested engine completed, was not applicable, or was withheld by safe mode |
 | `failed-engines` | Comma-separated engines that failed |
-| `untrusted-run` | `'true'` when the workspace holds code from a fork |
+| `untrusted-run` | `'true'` when safe mode classified the event as untrusted (a `pull_request` from a fork). It classifies the event, not the checked-out code — see [Safe mode on untrusted runs](#safe-mode-on-untrusted-runs) |
 | `skipped-risky-engines` | Comma-separated engines that safe mode withheld |
 | `sarif-file` | Path to the SARIF file |
 | `sbom-file` | Path to the SBOM file |
@@ -218,8 +218,10 @@ not the base repository. Everything else — `push`, `workflow_dispatch`, `sched
 A `pull_request` event whose head repository cannot be identified (missing or unparsable event
 payload, deleted fork) fails closed and is treated as untrusted.
 
-To run the risky engines anyway — for example in a `schedule` or `workflow_dispatch` job that scans
-a trusted ref — set:
+`schedule`, `workflow_dispatch` and `push` runs are trusted, so the risky engines already run there
+without any opt-in. Only set `allow-risky-engines` in a `pull_request` workflow that is triggered by
+forks and already isolates contributor code by other means, for example an ephemeral runner without
+access to other jobs, caches or networks:
 
 ```yaml
 - uses: sraisl/polyscan-action@v17

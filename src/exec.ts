@@ -176,7 +176,11 @@ export async function ensurePythonTool(
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), `polyscan-${tool}-`));
   try {
     const venv = path.join(directory, "venv");
-    const create = await run("python3", ["-m", "venv", venv]);
+    // `python3 -m` puts the working directory first on sys.path, so a `venv.py`
+    // in the scanned workspace would run instead of the standard library module.
+    // -I (isolated mode) drops that entry and ignores PYTHON* variables; running
+    // from the private temporary directory keeps the workspace out of reach.
+    const create = await run("python3", ["-I", "-m", "venv", venv], { cwd: directory });
     if (create.exitCode !== 0) throw new Error(create.stderr || "could not create Python venv");
     const install = await run(path.join(venv, "bin", "pip"), [
       "install",
