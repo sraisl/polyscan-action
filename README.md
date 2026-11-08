@@ -222,7 +222,7 @@ To run the risky engines anyway — for example in a `schedule` or `workflow_dis
 a trusted ref — set:
 
 ```yaml
-- uses: sraisl/polyscan-action@v16
+- uses: sraisl/polyscan-action@v17
   with:
     allow-risky-engines: "true"
 ```
@@ -234,6 +234,14 @@ a trusted ref — set:
 > untrusted code *and* the job has the base repository's secrets — the most dangerous combination.
 > PolyScan cannot detect that from the event alone; it logs a warning when a `pull_request_target`
 > run comes from a fork. Prefer `pull_request` for scanning contributor code.
+
+> [!WARNING]
+> Other events can also put contributor code into the workspace, and PolyScan treats them as
+> **trusted without a warning**: for example a `workflow_run` job that checks out the head of the
+> triggering pull request, or an `issue_comment` job (such as a `/scan` command) that checks out the
+> commented pull request. The event payload does not say which code the workflow checked out, so
+> PolyScan cannot detect this. In such workflows, leave `spotbugs` and `trufflehog` out of
+> `engines`, or run them only after checking that the pull request comes from this repository.
 
 ## Updating scanner tools
 

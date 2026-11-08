@@ -23,6 +23,13 @@ workflow that overrides the checkout to the pull request head combines untrusted
 base repository's secrets; PolyScan cannot detect that from the event, so it logs a warning
 instead. Prefer `pull_request` for scanning contributor code.
 
+Other events are treated as trusted without a warning, even when the workflow checks out
+contributor code: for example a `workflow_run` job that checks out the head of the triggering pull
+request, or an `issue_comment` job (such as a `/scan` command) that checks out the commented pull
+request. The event payload does not say which code was checked out, so PolyScan cannot detect this.
+Such workflows must leave `spotbugs` and `trufflehog` out of `engines`, or run them only after
+checking that the pull request comes from this repository.
+
 ## Supported Versions
 
 Only the [latest release](../../releases/latest) is actively supported. Please upgrade before
