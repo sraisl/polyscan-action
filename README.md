@@ -53,6 +53,7 @@ jobs:
 |---|---|---|
 | `target` | `.` | Workspace-contained directory to scan |
 | `engines` | `all` | `all` or comma-separated engines: `semgrep,opengrep,bandit,eslint,oxlint,spotbugs,trivy,detekt,gitleaks,betterleaks,gosec,hadolint,zizmor,trufflehog`. OpenGrep, ESLint and trufflehog are opt-in and are not included by `all`. |
+| `spotbugs-reuse-build` | `false` | Reuse existing SpotBugs build outputs containing compiled classes instead of rebuilding their modules |
 | `opengrep-config` | `auto` | OpenGrep rules config: `auto`, a local path, URL, or registry ID |
 | `semgrep-exclude-rules` | _(empty)_ | Comma-separated Semgrep rule IDs to exclude; other rules still scan the same files |
 | `opengrep-exclude-rules` | _(empty)_ | Comma-separated OpenGrep rule IDs to exclude; other rules still scan the same files |
