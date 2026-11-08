@@ -13,6 +13,8 @@ tags and must not be reused or moved.
 
 ## [Unreleased]
 
+## [v17.4.0] - 2026-11-08
+
 ### Added
 
 - Safe mode for untrusted runs: on a pull request from a fork, PolyScan now skips the engines
@@ -23,6 +25,20 @@ tags and must not be reused or moved.
 - `untrusted-run` and `skipped-risky-engines` outputs expose safe mode's decision.
 - The trust classification and the reason for it are logged on every run, trusted or not, so a
   misclassified run is visible instead of looking like a run with nothing to withhold.
+- SpotBugs supports monorepos: when the target has no `pom.xml`/`build.gradle(.kts)`/`settings.gradle(.kts)`, it
+  builds each top-most module below it and analyzes the class directories of all modules.
+- `spotbugs-reuse-build` input (default `false`): reuse existing build output (for example from an earlier build step)
+  per module instead of rebuilding it. Only directories that contain `.class` files count.
+
+### Changed
+
+- SpotBugs prefers the Maven Wrapper (`mvnw`) and the Gradle Wrapper (`gradlew`), searched from the module directory
+  up to the workspace root, over `mvn`/`gradle` on `PATH`. A wrapper without the executable bit is started with `sh`.
+  Build errors in the engine note name the module.
+- Updated the pinned scan engine versions in `tools.lock.json`: betterleaks 1.10.0, ESLint 10.14.0, OpenGrep 1.33.1,
+  oxlint 1.92.0, reviewdog 0.21.3, Semgrep 1.184.0, Trivy 0.76.2, TruffleHog 3.99.8 and zizmor 1.32.0.
+- The bundled `dist/` no longer contains `package.json`; only the version is embedded, so dependency updates that
+  do not affect the runtime no longer change the bundle.
 
 ### Security
 
