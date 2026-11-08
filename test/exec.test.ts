@@ -1,10 +1,11 @@
-import test from "node:test";
+import test, { mock } from "node:test";
 import assert from "node:assert/strict";
+import childProcess from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { ensurePythonTool, resolveExecutable, resolvePinnedExecutable } from "../src/exec";
+import { ensurePythonTool, findPinnedOnPath, resolveExecutable, resolvePinnedExecutable, run } from "../src/exec";
 
 function recordingCore() {
   const info: string[] = [];
@@ -124,6 +125,21 @@ test("resolvePinnedExecutable accepts output prefixed with the tool name", async
   }
 });
 
+test("resolvePinnedExecutable accepts oxlint's Version label without accepting arbitrary banners", async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "polyscan-version-"));
+  const executable = path.join(directory, "oxlint");
+  try {
+    fs.writeFileSync(executable, "#!/bin/sh\nprintf 'Version: 1.89.0\\n'\n");
+    fs.chmodSync(executable, 0o755);
+    assert.equal(await resolvePinnedExecutable("oxlint", "1.89.0", ["--version"], directory), executable);
+    assert.equal(await resolvePinnedExecutable("oxlint", "1.88.0", ["--version"], directory), null);
+    fs.writeFileSync(executable, "#!/bin/sh\nprintf 'Banner: 1.89.0\\n'\n");
+    assert.equal(await resolvePinnedExecutable("oxlint", "1.89.0", ["--version"], directory), null);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("ensurePythonTool reuses a preinstalled tool that reports the pinned version", async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "polyscan-python-"));
   const executable = path.join(directory, "bandit");
@@ -170,4 +186,119 @@ test("ensurePythonTool ignores a preinstalled tool with a different version", as
     process.env.PATH = originalPath;
     fs.rmSync(directory, { recursive: true, force: true });
   }
+});
+
+function textBusy(): NodeJS.ErrnoException {
+  const err = new Error("spawn ETXTBSY") as NodeJS.ErrnoException;
+  err.code = "ETXTBSY";
+  return err;
+}
+
+test("run retries a spawn that fails with ETXTBSY", async (t) => {
+  const original = childProcess.spawn;
+  let calls = 0;
+  const spawn = mock.method(childProcess, "spawn", ((...args: Parameters<typeof original>) => {
+    calls++;
+    if (calls < 3) throw textBusy();
+    return original(...args);
+  }) as typeof original);
+  t.after(() => spawn.mock.restore());
+
+  const result = await run(process.execPath, ["-e", "process.stdout.write('ok')"]);
+
+  assert.equal(calls, 3);
+  assert.deepEqual(result, { exitCode: 0, stdout: "ok", stderr: "" });
+});
+
+test("run reports a persistent ETXTBSY as a failed command instead of crashing", async (t) => {
+  const spawn = mock.method(childProcess, "spawn", (() => {
+    throw textBusy();
+  }) as unknown as typeof childProcess.spawn);
+  t.after(() => spawn.mock.restore());
+
+  const result = await run("scanner", ["--version"]);
+
+  assert.equal(spawn.mock.callCount(), 5);
+  assert.equal(result.exitCode, 127);
+  assert.match(result.stderr, /ETXTBSY/);
+});
+
+test("run captures output and exit codes and reports missing executables", async () => {
+  const result = await run(process.execPath, [
+    "-e",
+    "process.stdout.write(process.env.POLYSCAN_TEST); process.stderr.write('warn'); process.exit(3)",
+  ], { env: { POLYSCAN_TEST: "value" } });
+  assert.deepEqual(result, { exitCode: 3, stdout: "value", stderr: "warn" });
+
+  const missing = await run(path.join(os.tmpdir(), "polyscan-missing-binary"), []);
+  assert.equal(missing.exitCode, 127);
+  assert.match(missing.stderr, /ENOENT/);
+});
+
+// Version lines as the pinned releases print them (taken from each tool's source):
+// hadolint Hadolint.Meta.getVersion, gosec's -version, gitleaks/betterleaks' version
+// subcommand, trufflehog's kingpin --version, zizmor's clap --version, trivy's VersionInfo.
+const PATH_TOOL_VERSION_OUTPUTS: [tool: string, args: string[], output: string, version: string][] = [
+  ["hadolint", ["--version"], "Haskell Dockerfile Linter 2.15.1", "2.15.1"],
+  ["gosec", ["-version"], "Version: 2.29.0\\nGit tag: v2.29.0\\nBuild date: 2026-10-01", "2.29.0"],
+  ["zizmor", ["--version"], "zizmor 1.30.1", "1.30.1"],
+  ["gitleaks", ["version"], "8.30.1", "8.30.1"],
+  ["betterleaks", ["version"], "1.9.0", "1.9.0"],
+  ["trufflehog", ["--version"], "trufflehog 3.97.9", "3.97.9"],
+  ["trivy", ["--version"], "Version: 0.75.0\\nVulnerability DB:", "0.75.0"],
+];
+
+function withFakeTool(tool: string, output: string, run: (directory: string, executable: string) => Promise<void>) {
+  return async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "polyscan-path-tool-"));
+    const executable = path.join(directory, tool);
+    const previousPath = process.env.PATH;
+    try {
+      fs.writeFileSync(executable, `#!/bin/sh\nprintf '${output}\\n'\n`);
+      fs.chmodSync(executable, 0o755);
+      process.env.PATH = `${directory}${path.delimiter}${previousPath ?? ""}`;
+      await run(directory, executable);
+    } finally {
+      process.env.PATH = previousPath;
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  };
+}
+
+for (const [tool, args, output, version] of PATH_TOOL_VERSION_OUTPUTS) {
+  test(
+    `findPinnedOnPath reuses ${tool} from PATH when it reports the pinned version`,
+    withFakeTool(tool, output, async (_directory, executable) => {
+      const core = recordingCore();
+      assert.equal(await findPinnedOnPath(tool, version, args, core), executable);
+      assert.deepEqual(core.messages.warning, []);
+    }),
+  );
+}
+
+test(
+  "findPinnedOnPath ignores a PATH binary with a different version and warns",
+  withFakeTool("trivy", "Version: 0.50.0", async () => {
+    const core = recordingCore();
+    assert.equal(await findPinnedOnPath("trivy", "0.75.0", ["--version"], core), null);
+    assert.deepEqual(core.messages.warning, ["Ignoring trivy from PATH because it is not the pinned version 0.75.0"]);
+  }),
+);
+
+test("findPinnedOnPath returns null without a warning when the tool is not on PATH", async () => {
+  const core = recordingCore();
+  assert.equal(await findPinnedOnPath("polyscan-missing-tool", "1.0.0", ["--version"], core), null);
+  assert.deepEqual(core.messages.warning, []);
+});
+
+test("resolvePinnedExecutable does not accept hadolint's label with extra words before the version", async () => {
+  await withFakeTool("hadolint", "Haskell Dockerfile Linter build 2.15.1", async (directory) => {
+    assert.equal(await resolvePinnedExecutable("hadolint", "2.15.1", ["--version"], directory), null);
+  })();
+});
+
+test("run feeds input to the child's stdin", async () => {
+  const result = await run(process.execPath, ["-e", "process.stdin.pipe(process.stdout)"], { input: "hello sarif" });
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.stdout, "hello sarif");
 });

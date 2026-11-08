@@ -1,9 +1,13 @@
 // Render a Markdown job summary for GitHub Actions.
-import { EngineResult, Finding, SeverityCounts } from "./schema";
+import { EngineResult, Finding, SEVERITY_ORDER, Severity, SeverityCounts, countBySeverity } from "./schema";
 import { GateResult } from "./gate";
 import { EngineName } from "./engines";
+import { findingUrl, sourceUrl } from "./links";
+import { ScanContext } from "./report";
+import { reportedPinnedVersion } from "./tool-versions";
+import pkg from "../package.json";
 
-const SEV_EMOJI: Record<string, string> = {
+const SEV_EMOJI: Record<Severity, string> = {
   critical: "🟣",
   high: "🔴",
   medium: "🟠",
@@ -28,45 +32,6 @@ function code(value: string): string {
 // wrapped in a code span (code spans are never parsed as markdown by CommonMark).
 function textCell(value: string): string {
   return tableCell(value).replaceAll("[", String.raw`\[`);
-}
-
-// Keyed by EngineName (not a bare string) so a typo in an engine key fails to
-// compile instead of silently never matching.
-// Only link when a canonical URL can be derived with confidence: a fixed
-// engine-doc naming convention. Engine-supplied advisory URLs (Trivy) and the
-// CWE fallback are handled separately in findingUrl().
-const ENGINE_RULE_URL: Partial<Record<EngineName, (ruleId: string) => string | undefined>> = {
-  hadolint: (ruleId) => {
-    if (/^DL\d+$/.test(ruleId)) return `https://github.com/hadolint/hadolint/wiki/${ruleId}`;
-    if (/^SC\d+$/.test(ruleId)) return `https://www.shellcheck.net/wiki/${ruleId}`;
-    return undefined;
-  },
-  gosec: (ruleId) => (/^G\d+$/.test(ruleId) ? `https://securego.io/docs/rules/${ruleId.toLowerCase()}.html` : undefined),
-  eslint: (ruleId) => (ruleId.includes("/") ? undefined : `https://eslint.org/docs/latest/rules/${ruleId}`),
-  zizmor: (ruleId) =>
-    ruleId.startsWith("zizmor/") ? `https://docs.zizmor.sh/audits/#${ruleId.slice("zizmor/".length)}` : undefined,
-};
-
-// finding.url is engine-supplied (currently only Trivy's PrimaryURL) and not
-// type-enforced beyond "string" — reject anything that isn't a well-formed
-// http(s) URL rather than rendering it as a link destination.
-function isHttpUrl(value: string): boolean {
-  try {
-    const parsed = new URL(value);
-    return parsed.protocol === "http:" || parsed.protocol === "https:";
-  } catch {
-    return false;
-  }
-}
-
-function findingUrl(finding: Finding): string | undefined {
-  if (finding.url && isHttpUrl(finding.url)) return finding.url;
-
-  const specific = ENGINE_RULE_URL[finding.engine as EngineName]?.(finding.ruleId);
-  if (specific) return specific;
-
-  const cweMatch = finding.cwe ? /^CWE-(\d+)$/.exec(finding.cwe) : null;
-  return cweMatch ? `https://cwe.mitre.org/data/definitions/${cweMatch[1]}.html` : undefined;
 }
 
 function ruleCell(finding: Finding): string {
@@ -98,16 +63,54 @@ function engineIcon(result: EngineResult): string {
   return "⚠️";
 }
 
+export function formatDuration(ms: number): string {
+  const seconds = ms / 1000;
+  if (seconds < 59.95) return `${seconds.toFixed(1)}s`;
+  // Round before splitting so 119.6s carries into the minutes ("2m 0s", not "1m 60s").
+  const total = Math.round(seconds);
+  return `${Math.floor(total / 60)}m ${total % 60}s`;
+}
+
+// A zero count renders as "·" so the non-zero cells stand out in wide tables.
+function countCell(count: number): string {
+  return count === 0 ? "·" : String(count);
+}
+
 function engineSection(results: EngineResult[]): string[] {
-  const lines = ["### Engines"];
+  const lines = [
+    "### Engines",
+    "",
+    `| Engine | Status | Pinned version | Duration | ${SEVERITY_ORDER.map((sev) => SEV_EMOJI[sev]).join(" | ")} | Note |`,
+    `|---|---|---|---|${SEVERITY_ORDER.map(() => "---:").join("|")}|---|`,
+  ];
   for (const result of results) {
-    const note = result.note ? ` — _${tableCell(result.note)}_` : "";
+    const counts = countBySeverity(result.findings);
+    const version = reportedPinnedVersion(result);
+    const duration = result.durationMs === undefined ? "–" : formatDuration(result.durationMs);
     lines.push(
-      `- ${engineIcon(result)} **${tableCell(result.engine)}**: ` +
-        `${result.findings.length} findings (${result.status})${note}`,
+      `| **${tableCell(result.engine)}** | ${engineIcon(result)} ${result.status} | ` +
+        `${version ? code(version) : "–"} | ${duration} | ` +
+        `${SEVERITY_ORDER.map((sev) => countCell(counts[sev])).join(" | ")} | ` +
+        `${result.note ? textCell(result.note) : ""} |`,
     );
   }
   return [...lines, ""];
+}
+
+function shortSha(sha: string): string {
+  return /^[0-9a-f]{40}$/i.test(sha) ? sha.slice(0, 7) : sha;
+}
+
+function contextSection(context: ScanContext): string[] {
+  const parts = [`**Target:** ${code(context.target)}`];
+  const { github } = context;
+  if (github.sha) {
+    const ref = github.ref ? ` on ${code(github.ref)}` : "";
+    parts.push(`**Commit:** ${code(shortSha(github.sha))}${ref}`);
+  }
+  parts.push(`**Engines:** ${context.engines.length}`, `**Duration:** ${formatDuration(context.durationMs)}`);
+  parts.push(`**PolyScan:** ${code(`v${pkg.version}`)}`);
+  return [parts.join(" · "), ""];
 }
 
 function findingLocation(finding: Finding): string {
@@ -169,39 +172,143 @@ function imageSection(findings: Finding[]): string[] {
   return [...lines, ""];
 }
 
-function findingsSection(findings: Finding[]): string[] {
-  if (findings.length === 0) return [];
+// Mermaid labels are quoted strings; keep them to a conservative character set.
+function mermaidLabel(value: string): string {
+  return value.replaceAll(/[^\w .:/-]/g, "_");
+}
 
-  const shown = findings.slice(0, 50);
-  const lines = [
-    "### Findings",
-    "| Sev | Rule | Details | Location | Engine |",
-    "|---|---|---|---|---|",
+function pieChart(title: string, slices: [string, number][]): string[] {
+  return [
+    "```mermaid",
+    `pie showData title ${title}`,
+    ...slices.map(([label, count]) => `    "${mermaidLabel(label)}" : ${count}`),
+    "```",
+    "",
   ];
-  for (const finding of shown) {
-    const cwe = finding.cwe ? ` (${finding.cwe})` : "";
-    lines.push(
-      `| ${SEV_EMOJI[finding.severity]} ${finding.severity} | ` +
-        `${ruleCell(finding)}${cwe} | ${textCell(finding.message)} | ` +
-        `${code(findingLocation(finding))} | ${tableCell(finding.engine)} |`,
-    );
+}
+
+function chartsSection(findings: Finding[], counts: SeverityCounts): string[] {
+  if (findings.length === 0) return [];
+  const byEngine = new Map<string, number>();
+  for (const finding of findings) byEngine.set(finding.engine, (byEngine.get(finding.engine) ?? 0) + 1);
+  return [
+    ...pieChart(
+      "Findings by severity",
+      SEVERITY_ORDER.filter((sev) => counts[sev] > 0).map((sev) => [sev, counts[sev]]),
+    ),
+    ...pieChart(
+      "Findings by engine",
+      [...byEngine.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])),
+    ),
+  ];
+}
+
+const TOP_N = 10;
+const SEV_RANK: Record<Severity, number> = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
+
+function hotspotsSection(findings: Finding[]): string[] {
+  const byFile = new Map<string, Finding[]>();
+  for (const finding of findings) {
+    if (finding.source?.startsWith("image:")) continue;
+    const file = finding.file.startsWith("./") ? finding.file.slice(2) : finding.file;
+    byFile.set(file, [...(byFile.get(file) ?? []), finding]);
   }
-  if (findings.length > shown.length) {
-    lines.push("", `_… and ${findings.length - shown.length} more findings._`);
+  if (byFile.size === 0) return [];
+
+  const lines = ["### 🔥 Hotspots", "", "| File | Findings | Worst | Engines |", "|---|---:|---|---|"];
+  const ranked = [...byFile.entries()].sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]));
+  for (const [file, fileFindings] of ranked.slice(0, TOP_N)) {
+    const worst = fileFindings.reduce((acc, f) => (SEV_RANK[f.severity] < SEV_RANK[acc] ? f.severity : acc), "info" as Severity);
+    const engines = [...new Set(fileFindings.map((f) => f.engine))].sort().join(", ");
+    lines.push(`| ${code(file)} | ${fileFindings.length} | ${SEV_EMOJI[worst]} ${worst} | ${tableCell(engines)} |`);
   }
   return [...lines, ""];
+}
+
+function topRulesSection(findings: Finding[]): string[] {
+  const byRule = new Map<string, { finding: Finding; hits: number }>();
+  for (const finding of findings) {
+    const key = `${finding.engine}\u0000${finding.ruleId}`;
+    const entry = byRule.get(key);
+    if (entry) entry.hits += 1;
+    else byRule.set(key, { finding, hits: 1 });
+  }
+  if (byRule.size === 0) return [];
+
+  const lines = ["### 📋 Top rules", "", "| Rule | Engine | Hits |", "|---|---|---:|"];
+  const ranked = [...byRule.values()].sort(
+    (a, b) => b.hits - a.hits || a.finding.ruleId.localeCompare(b.finding.ruleId),
+  );
+  for (const { finding, hits } of ranked.slice(0, TOP_N)) {
+    lines.push(`| ${ruleCell(finding)} | ${tableCell(finding.engine)} | ${hits} |`);
+  }
+  return [...lines, ""];
+}
+
+function locationCell(finding: Finding, sourceBaseUrl: string | undefined): string {
+  const label = code(findingLocation(finding));
+  const url = sourceUrl(finding, sourceBaseUrl);
+  return url ? `[${label}](<${url}>)` : label;
+}
+
+// Keeps the summary well under GitHub's 1 MiB job summary limit on noisy repositories.
+const MAX_ROWS_PER_SEVERITY = 200;
+
+function findingsSection(findings: Finding[], sourceBaseUrl: string | undefined): string[] {
+  if (findings.length === 0) return [];
+
+  const lines = ["### Findings", ""];
+  for (const severity of SEVERITY_ORDER) {
+    const group = findings.filter((finding) => finding.severity === severity);
+    if (group.length === 0) continue;
+    const open = severity === "critical" || severity === "high" ? " open" : "";
+    lines.push(
+      `<details${open}>`,
+      `<summary>${SEV_EMOJI[severity]} <b>${severity}</b> (${group.length})</summary>`,
+      "",
+      "| Rule | Details | Location | Engine |",
+      "|---|---|---|---|",
+    );
+    for (const finding of group.slice(0, MAX_ROWS_PER_SEVERITY)) {
+      const cwe = finding.cwe ? ` (${finding.cwe})` : "";
+      lines.push(
+        `| ${ruleCell(finding)}${cwe} | ${textCell(finding.message)} | ` +
+          `${locationCell(finding, sourceBaseUrl)} | ${tableCell(finding.engine)} |`,
+      );
+    }
+    if (group.length > MAX_ROWS_PER_SEVERITY) {
+      lines.push("", `_… and ${group.length - MAX_ROWS_PER_SEVERITY} more ${severity} findings (see the SARIF/JSON report)._`);
+    }
+    lines.push("", "</details>", "");
+  }
+  return lines;
 }
 
 function gateSection(gate: GateResult, enforced: boolean): string[] {
   let result: string;
   if (!enforced) {
-    result = "> ℹ️ Quality Gate not enforced (`gate: false`).";
+    result = gate.passed
+      ? "> ℹ️ Quality Gate not enforced (`gate: false`) — thresholds satisfied."
+      : `> ℹ️ Quality Gate not enforced (\`gate: false\`) — would have failed: ${gate.reasons.join(", ")}.`;
   } else if (gate.passed) {
     result = "> ✅ **Passed** — thresholds satisfied.";
   } else {
     result = `> ❌ **Failed** — ${gate.reasons.join(", ")}.`;
   }
-  return ["### Quality Gate", result, ""];
+
+  const rows: [Severity, number][] = [
+    ["critical", gate.thresholds.maxCritical],
+    ["high", gate.thresholds.maxHigh],
+    ["medium", gate.thresholds.maxMedium],
+  ];
+  const lines = ["### Quality Gate", result, "", "| Severity | Found | Max | Result |", "|---|---:|---:|---|"];
+  for (const [severity, max] of rows) {
+    const found = gate.counts[severity];
+    lines.push(
+      `| ${SEV_EMOJI[severity]} ${severity} | ${found} | ${max} | ${found > max ? "❌ exceeded" : "✅ ok"} |`,
+    );
+  }
+  return [...lines, "", "_Low and info findings are reported but not gated._", ""];
 }
 
 export function renderSummary(
@@ -210,15 +317,21 @@ export function renderSummary(
   gate: GateResult,
   gateEnforced: boolean,
   engineResults: EngineResult[],
+  context?: ScanContext,
+  sourceBaseUrl?: string,
 ): string {
   return [
     "## 🔍 PolyScan Report",
     "",
+    ...(context ? contextSection(context) : []),
     ...severitySection(counts),
+    ...chartsSection(findings, counts),
     ...engineSection(engineResults),
+    ...hotspotsSection(findings),
+    ...topRulesSection(findings),
     ...secretsSection(findings),
     ...imageSection(findings),
-    ...findingsSection(findings),
+    ...findingsSection(findings, sourceBaseUrl),
     ...gateSection(gate, gateEnforced),
   ].join("\n");
 }

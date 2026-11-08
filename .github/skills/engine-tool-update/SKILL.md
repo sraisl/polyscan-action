@@ -1,6 +1,6 @@
 ---
 name: engine-tool-update
-description: "Use when updating, checking, or validating scanner and helper-tool versions in tools.lock.json, including Semgrep, OpenGrep, Trivy, gosec, gitleaks, detekt, hadolint, SpotBugs, Bandit, and ESLint."
+description: "Use when updating, checking, or validating scanner and helper-tool versions in tools.lock.json, including Semgrep, OpenGrep, Trivy, gosec, gitleaks, detekt, hadolint, SpotBugs, Bandit, oxlint, and ESLint."
 argument-hint: "Name the tool and requested version, or ask to check available updates."
 user-invocable: true
 ---

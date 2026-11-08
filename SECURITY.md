@@ -8,8 +8,9 @@ the workspace — including build files — is contributor-controlled.
 PolyScan classifies a run as **untrusted** when the event is `pull_request` and the head repository
 is not the base repository, and then skips the engines that would act on that code:
 
-- **`spotbugs`** compiles the target with its own `mvn` / `gradle` build files, which executes
-  contributor-controlled code on the runner.
+- **`spotbugs`** compiles the target with its own `mvn` / `gradle` build files and runs a checked-in
+  `mvnw` / `gradlew` wrapper (also one in a parent directory up to the workspace root), which
+  executes contributor-controlled code on the runner.
 - **`trufflehog`** makes live outbound requests to third-party provider APIs to verify candidate
   credentials found in the repository.
 

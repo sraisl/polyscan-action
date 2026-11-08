@@ -7,7 +7,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import * as tc from "@actions/tool-cache";
 import { Finding, EngineResult, Severity } from "../schema";
-import { run, which } from "../exec";
+import { findPinnedOnPath, run } from "../exec";
 import { resolveTarget } from "../target";
 import { cachedTool, downloadVerified } from "../tools";
 import { githubReleaseUrl, TOOLS } from "../tool-versions";
@@ -32,8 +32,9 @@ function mapSeverity(s: string): Severity {
 }
 
 async function ensureTrivy(): Promise<string | null> {
-  if (await which("trivy")) return "trivy";
-  core.info(`trivy not found — downloading v${TRIVY_VERSION}…`);
+  const pinned = await findPinnedOnPath("trivy", TRIVY_VERSION, ["--version"], core);
+  if (pinned) return pinned;
+  core.info(`trivy v${TRIVY_VERSION} not found on PATH — downloading…`);
   try {
     return await cachedTool("trivy", TRIVY_VERSION, "trivy", async (directory) => {
       const archive = await downloadVerified(

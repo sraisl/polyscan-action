@@ -9,7 +9,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as tc from "@actions/tool-cache";
 import { Finding, EngineResult, Severity } from "../schema";
-import { run, which } from "../exec";
+import { findPinnedOnPath, run } from "../exec";
 import { resolveTarget } from "../target";
 import { cachedTool, downloadVerified } from "../tools";
 import { githubReleaseUrl, TOOLS } from "../tool-versions";
@@ -61,8 +61,9 @@ export function parseTrufflehogSarif(sarif: unknown, abs: string): Finding[] {
 }
 
 async function ensureTrufflehog(): Promise<string | null> {
-  if (await which("trufflehog")) return "trufflehog";
-  core.info(`trufflehog not found - downloading v${TRUFFLEHOG.version}...`);
+  const pinned = await findPinnedOnPath("trufflehog", TRUFFLEHOG.version, ["--version"], core);
+  if (pinned) return pinned;
+  core.info(`trufflehog v${TRUFFLEHOG.version} not found on PATH - downloading...`);
   try {
     return await cachedTool("trufflehog", TRUFFLEHOG.version, "trufflehog", async (directory) => {
       const archive = await downloadVerified(githubReleaseUrl(TRUFFLEHOG), TRUFFLEHOG.sha256);

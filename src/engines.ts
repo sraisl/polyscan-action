@@ -1,7 +1,7 @@
 export const DEFAULT_ENGINES = [
   "semgrep",
   "bandit",
-  "eslint",
+  "oxlint",
   "spotbugs",
   "trivy",
   "detekt",
@@ -17,6 +17,7 @@ export const SUPPORTED_ENGINES = [
   "opengrep",
   "bandit",
   "eslint",
+  "oxlint",
   "spotbugs",
   "trivy",
   "detekt",
@@ -54,7 +55,8 @@ export function unknownEngines(engines: string[]): string[] {
 // compile instead of silently never matching.
 export const RISKY_ENGINE_REASONS: Partial<Record<EngineName, string>> = {
   spotbugs:
-    "compiles the target using its own build files (mvn compile, gradle classes, ./gradlew), " +
+    "compiles the target using its own build files and wrappers (mvn compile, gradle classes, " +
+    "./mvnw and ./gradlew, also from parent directories), " +
     "which executes repository-controlled code on the runner",
   trufflehog:
     "verifies candidate credentials by making live outbound requests to third-party provider APIs",

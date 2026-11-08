@@ -105,6 +105,7 @@ test("findDockerfiles finds Dockerfile variants and ignores vendored copies", ()
     fs.writeFileSync(path.join(services, "Dockerfile.prod"), "FROM scratch\n");
     fs.writeFileSync(path.join(services, "worker.dockerfile"), "FROM scratch\n");
     fs.writeFileSync(path.join(services, "README.md"), "not a dockerfile\n");
+    fs.writeFileSync(path.join(services, "Dockerfile.dockerignore"), "*\n");
     fs.writeFileSync(path.join(vendor, "Dockerfile"), "FROM scratch\n");
 
     assert.deepEqual(

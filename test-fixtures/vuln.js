@@ -7,6 +7,12 @@ function run() {
   eval(userInput); // no-eval / no-implied-eval
 }
 
+// string-evaluating timer and global eval (need oxlint's browser/node environments)
+function schedule() {
+  setTimeout("alert(document.cookie)", 0); // no-implied-eval
+  window.eval(userInput); // no-eval
+}
+
 // innerHTML XSS sink
 function render() {
   document.getElementById("out").innerHTML = userInput; // xss

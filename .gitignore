@@ -6,3 +6,4 @@ dist-test/
 polyscan.sarif
 polyscan.sbom.json
 polyscan-summary.md
+polyscan-report.json

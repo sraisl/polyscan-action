@@ -1,6 +1,6 @@
 // Shared helper to run an external command and capture stdout/stderr,
 // tolerating non-zero exit codes (linters exit non-zero when they find issues).
-import * as exec from "@actions/exec";
+import * as childProcess from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -11,38 +11,77 @@ export interface RunResult {
   stderr: string;
 }
 
+// Spawning a binary that another tool install has just written can fail with ETXTBSY
+// while a concurrently forked child still holds the inherited write descriptor.
+// The window closes within milliseconds, so the spawn is retried.
+const SPAWN_RETRY_ATTEMPTS = 5;
+const SPAWN_RETRY_DELAY_MS = 100;
+
+function isTextBusy(err: unknown): boolean {
+  return (err as NodeJS.ErrnoException | null)?.code === "ETXTBSY";
+}
+
+// child_process.spawn is used directly instead of @actions/exec: @actions/exec spawns
+// inside an async Promise executor, so a synchronous spawn failure such as ETXTBSY
+// becomes an unhandled rejection that crashes the action instead of reaching a caller.
+function spawnOnce(
+  command: string,
+  args: string[],
+  options: { cwd?: string; env: { [key: string]: string }; input?: string },
+): Promise<RunResult> {
+  return new Promise((resolve, reject) => {
+    let stdout = "";
+    let stderr = "";
+    let child: childProcess.ChildProcess;
+    try {
+      child = childProcess.spawn(command, args, {
+        cwd: options.cwd,
+        env: options.env,
+        stdio: [options.input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
+      });
+    } catch (err) {
+      reject(err);
+      return;
+    }
+    if (options.input !== undefined) {
+      // A child that exits without draining stdin raises EPIPE here; its exit code
+      // and stderr already tell the caller what went wrong.
+      child.stdin?.on("error", () => undefined);
+      child.stdin?.end(options.input);
+    }
+    child.stdout?.setEncoding("utf8").on("data", (data: string) => {
+      stdout += data;
+    });
+    child.stderr?.setEncoding("utf8").on("data", (data: string) => {
+      stderr += data;
+    });
+    child.once("error", reject);
+    child.once("close", (code, signal) => {
+      resolve({ exitCode: code ?? 128, stdout, stderr: signal ? `${stderr}killed by ${signal}` : stderr });
+    });
+  });
+}
+
 export async function run(
   command: string,
   args: string[],
-  options: { cwd?: string; env?: { [key: string]: string } } = {},
+  options: { cwd?: string; env?: { [key: string]: string }; input?: string } = {},
 ): Promise<RunResult> {
-  let stdout = "";
-  let stderr = "";
-  let exitCode = 0;
   const mergedEnv: { [key: string]: string } = {};
   for (const [k, v] of Object.entries(process.env)) {
     if (v !== undefined) mergedEnv[k] = v;
   }
   if (options.env) Object.assign(mergedEnv, options.env);
-  try {
-    exitCode = await exec.exec(command, args, {
-      cwd: options.cwd,
-      env: mergedEnv,
-      ignoreReturnCode: true,
-      silent: true,
-      listeners: {
-        stdout: (data: Buffer) => {
-          stdout += data.toString();
-        },
-        stderr: (data: Buffer) => {
-          stderr += data.toString();
-        },
-      },
-    });
-  } catch (err) {
-    return { exitCode: 127, stdout, stderr: String(err) };
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await spawnOnce(command, args, { cwd: options.cwd, env: mergedEnv, input: options.input });
+    } catch (err) {
+      if (!isTextBusy(err) || attempt === SPAWN_RETRY_ATTEMPTS) {
+        return { exitCode: 127, stdout: "", stderr: String(err) };
+      }
+      await new Promise((resolve) => setTimeout(resolve, SPAWN_RETRY_DELAY_MS * attempt));
+    }
   }
-  return { exitCode, stdout, stderr };
 }
 
 // Resolve against the same PATH inherited by direct child processes. A login
@@ -78,12 +117,30 @@ export async function resolvePinnedExecutable(
   const result = await run(executable, versionArgs);
   if (result.exitCode !== 0) return null;
   // Tools report the version either bare ("1.180.0") or prefixed with their own
-  // name ("bandit 1.9.4"). Allow at most one leading name token on the first
-  // line so a version number printed elsewhere in a banner cannot pass for the
-  // pinned release.
+  // name ("bandit 1.9.4"), a "Version: 1.89.0" label (oxlint, trivy, gosec) or
+  // hadolint's "Haskell Dockerfile Linter 2.15.1". Allow at most one leading token
+  // or one of these labels on the first line so a version number printed elsewhere
+  // in a banner cannot pass for the pinned release.
   const firstLine = result.stdout.trim().split(/\r?\n/, 1)[0] ?? "";
-  const match = /^(?:[A-Za-z][\w.+-]*\s+)?v?(\d+(?:\.\d+)+)(?:\s|$)/.exec(firstLine);
+  const match =
+    /^(?:(?:[A-Za-z][\w.+-]*|Version:|Haskell Dockerfile Linter)\s+)?v?(\d+(?:\.\d+)+)(?:\s|$)/.exec(firstLine);
   return match?.[1] === expectedVersion ? executable : null;
+}
+
+// A binary already on PATH is reused only when it reports the version pinned in
+// tools.lock.json, so a runner image's own copy cannot change scan results or
+// make the reported pinned version wrong. Otherwise the caller installs the
+// pinned release.
+export async function findPinnedOnPath(
+  tool: string,
+  version: string,
+  versionArgs: string[],
+  core: { warning: (s: string) => void },
+): Promise<string | null> {
+  if (!resolveExecutable(tool)) return null;
+  const pinned = await resolvePinnedExecutable(tool, version, versionArgs);
+  if (!pinned) core.warning(`Ignoring ${tool} from PATH because it is not the pinned version ${version}`);
+  return pinned;
 }
 
 // Check whether a binary is available to direct child processes.

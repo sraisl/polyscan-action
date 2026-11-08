@@ -1,6 +1,5 @@
 // PolyScan GitHub Action — entry point.
 import * as core from "@actions/core";
-import * as fs from "node:fs";
 import * as path from "node:path";
 import { DefaultArtifactClient } from "@actions/artifact";
 
@@ -9,6 +8,7 @@ import { runSemgrep } from "./engines/semgrep";
 import { runOpengrep } from "./engines/opengrep";
 import { runBandit } from "./engines/bandit";
 import { runEslint } from "./engines/eslint";
+import { runOxlint } from "./engines/oxlint";
 import { runSpotbugs } from "./engines/spotbugs";
 import { runTrivy } from "./engines/trivy";
 import { runDetekt } from "./engines/detekt";
@@ -22,6 +22,9 @@ import { evaluateGate } from "./gate";
 import { toSarif } from "./sarif";
 import { toSbom } from "./sbom";
 import { renderSummary } from "./summary";
+import { sourceBaseUrl } from "./links";
+import { runReviewdog } from "./reviewdog";
+import { ScanContext, githubContext, toJsonReport } from "./report";
 import {
   resolveEngines,
   selectEnginesForRun,
@@ -30,10 +33,11 @@ import {
   SUPPORTED_ENGINES,
 } from "./engines";
 import { isUntrustedRun, RunTrust } from "./untrusted";
-import { normalizeFindingPath, resolveOutputDir, resolveTarget } from "./target";
+import { normalizeFindingPath, resolveOutputDir, resolveTarget, workspaceRoot, writeReportFile } from "./target";
 import { assertSupportedPlatform } from "./tools";
 import { mapConcurrentWithBarriers, parseMaxConcurrency } from "./scheduler";
 import { parseExcludedRules } from "./rule-exclusions";
+import { DEFAULT_ARTIFACT_NAME, uploadWithUniqueName } from "./artifact";
 
 const DEFAULT_MAX_CONCURRENCY = 2;
 
@@ -61,14 +65,19 @@ interface ActionConfig {
   failOnEngineError: boolean;
   wantSarif: boolean;
   wantSbom: boolean;
+  wantJsonReport: boolean;
   uploadArtifacts: boolean;
+  artifactName: string;
   uploadSarif: boolean;
+  reviewdog: boolean;
+  githubToken: string;
   maxConcurrency: number;
   outputDir: string;
   trivyImage?: string;
   opengrepConfig: string;
   semgrepExcludeRules: string[];
   opengrepExcludeRules: string[];
+  spotbugsReuseBuild: boolean;
   gate: {
     maxCritical: number;
     maxHigh: number;
@@ -102,8 +111,12 @@ function readConfig(): ActionConfig {
     failOnEngineError: boolInput("fail-on-engine-error", true),
     wantSarif: boolInput("sarif", true),
     wantSbom: boolInput("sbom", false),
+    wantJsonReport: boolInput("json-report", true),
     uploadArtifacts: boolInput("upload-artifacts", true),
+    artifactName: core.getInput("artifact-name") || DEFAULT_ARTIFACT_NAME,
     uploadSarif: boolInput("upload-sarif", false),
+    reviewdog: boolInput("reviewdog", false),
+    githubToken: core.getInput("github-token"),
     maxConcurrency: parseMaxConcurrency(
       core.getInput("max-concurrency"),
       DEFAULT_MAX_CONCURRENCY,
@@ -114,6 +127,7 @@ function readConfig(): ActionConfig {
     opengrepConfig: core.getInput("opengrep-config") || "auto",
     semgrepExcludeRules: parseExcludedRules(core.getInput("semgrep-exclude-rules")),
     opengrepExcludeRules: parseExcludedRules(core.getInput("opengrep-exclude-rules")),
+    spotbugsReuseBuild: boolInput("spotbugs-reuse-build", false),
     gate: {
       maxCritical: intInput("max-critical", 0),
       maxHigh: intInput("max-high", 0),
@@ -125,6 +139,7 @@ function readConfig(): ActionConfig {
 async function runEngine(
   name: string,
   target: string,
+  spotbugsReuseBuild: boolean,
   trivyImage: string | undefined,
   opengrepConfig: string,
   semgrepExcludeRules: string[],
@@ -140,8 +155,10 @@ async function runEngine(
         return await runBandit(target);
       case "eslint":
         return await runEslint(target);
+      case "oxlint":
+        return await runOxlint(target);
       case "spotbugs":
-        return await runSpotbugs(target);
+        return await runSpotbugs(target, spotbugsReuseBuild);
       case "trivy":
         return await runTrivy(target, trivyImage);
       case "detekt":
@@ -199,13 +216,15 @@ async function runEngines(config: ActionConfig): Promise<EngineResult[]> {
       const result = await runEngine(
         engine,
         config.target,
+        config.spotbugsReuseBuild,
         config.trivyImage,
         config.opengrepConfig,
         config.semgrepExcludeRules,
         config.opengrepExcludeRules,
       );
       normalizeEngineFindings(result, config.target);
-      const elapsedSeconds = ((Date.now() - startedAt) / 1000).toFixed(1);
+      result.durationMs = Date.now() - startedAt;
+      const elapsedSeconds = (result.durationMs / 1000).toFixed(1);
       core.info(
         `[${engine}] completed in ${elapsedSeconds}s: ${result.findings.length} findings ` +
           `(status=${result.status})`,
@@ -264,13 +283,15 @@ function sortedFindings(engineResults: EngineResult[]): Finding[] {
 function writeReports(
   config: ActionConfig,
   findings: Finding[],
+  engineResults: EngineResult[],
   summary: string,
+  jsonReport: string,
 ): { files: string[]; sarifPath: string } {
   const artifactFiles: string[] = [];
   let sarifPath = "";
   if (config.wantSarif) {
     sarifPath = path.join(config.outputDir, "polyscan.sarif");
-    fs.writeFileSync(sarifPath, toSarif(findings));
+    writeReportFile(sarifPath, toSarif(findings, engineResults));
     core.info(`Wrote SARIF: ${sarifPath}`);
     artifactFiles.push(sarifPath);
     core.setOutput("sarif-file", sarifPath);
@@ -278,14 +299,22 @@ function writeReports(
 
   if (config.wantSbom) {
     const sbomPath = path.join(config.outputDir, "polyscan.sbom.json");
-    fs.writeFileSync(sbomPath, toSbom(config.target));
+    writeReportFile(sbomPath, toSbom(config.target));
     core.info(`Wrote SBOM: ${sbomPath}`);
     artifactFiles.push(sbomPath);
     core.setOutput("sbom-file", sbomPath);
   }
 
+  if (config.wantJsonReport) {
+    const jsonPath = path.join(config.outputDir, "polyscan-report.json");
+    writeReportFile(jsonPath, jsonReport);
+    core.info(`Wrote JSON report: ${jsonPath}`);
+    artifactFiles.push(jsonPath);
+    core.setOutput("json-file", jsonPath);
+  }
+
   const summaryPath = path.join(config.outputDir, "polyscan-summary.md");
-  fs.writeFileSync(summaryPath, summary);
+  writeReportFile(summaryPath, summary);
   artifactFiles.push(summaryPath);
   return { files: artifactFiles, sarifPath };
 }
@@ -298,11 +327,19 @@ async function publishSummary(summary: string): Promise<void> {
   }
 }
 
-async function uploadReports(files: string[], outputDir: string): Promise<void> {
+async function uploadReports(files: string[], outputDir: string, artifactName: string): Promise<void> {
   try {
     const client = new DefaultArtifactClient();
-    await client.uploadArtifact("polyscan-reports", files, outputDir, { retentionDays: 30 });
-    core.info(`Uploaded ${files.length} report artifact(s).`);
+    const name = await uploadWithUniqueName(artifactName, async (candidate) => {
+      await client.uploadArtifact(candidate, files, outputDir, { retentionDays: 30 });
+    });
+    if (name !== artifactName) {
+      core.info(
+        `Requested artifact name "${artifactName}" was adjusted (invalid characters or name already ` +
+          `used in this workflow run); uploaded as "${name}".`,
+      );
+    }
+    core.info(`Uploaded ${files.length} report file(s) as artifact "${name}".`);
   } catch (err) {
     core.warning(`artifact upload failed: ${String(err).slice(0, 200)}`);
   }
@@ -367,22 +404,46 @@ async function main(): Promise<void> {
   core.info(`PolyScan scanning "${config.target}" with engines: ${config.engines.join(", ")}`);
   const skippedResults = reportSafeMode(config);
 
+  const startedAt = new Date();
   const engineResults = [...(await runEngines(config)), ...skippedResults];
+  const context: ScanContext = {
+    target: path.relative(workspaceRoot(), config.target).split(path.sep).join("/") || ".",
+    engines: [...config.engines, ...config.skippedEngines.map((skipped) => skipped.engine)],
+    maxConcurrency: config.maxConcurrency,
+    startedAt: startedAt.toISOString(),
+    durationMs: Date.now() - startedAt.getTime(),
+    github: githubContext(),
+  };
   const findings = sortedFindings(engineResults);
   const counts = countBySeverity(findings);
   const gate = evaluateGate(findings, config.gate);
-  const summary = renderSummary(findings, counts, gate, config.gateEnforced, engineResults);
+  const summary = renderSummary(
+    findings,
+    counts,
+    gate,
+    config.gateEnforced,
+    engineResults,
+    context,
+    sourceBaseUrl(),
+  );
+  const jsonReport = config.wantJsonReport
+    ? toJsonReport({ findings, counts, gate, gateEnforced: config.gateEnforced, engineResults, context })
+    : "";
 
   await publishSummary(summary);
-  const reports = writeReports(config, findings, summary);
+  const reports = writeReports(config, findings, engineResults, summary, jsonReport);
   if (config.uploadArtifacts && reports.files.length > 0) {
-    await uploadReports(reports.files, config.outputDir);
+    await uploadReports(reports.files, config.outputDir, config.artifactName);
   }
   if (config.uploadSarif && reports.sarifPath) {
     core.info(
       "upload-sarif=true: use a follow-up 'github/codeql-action/upload-sarif' step " +
         `with sarif_file: ${reports.sarifPath} (needs security-events: write).`,
     );
+  }
+
+  if (config.reviewdog) {
+    await runReviewdog(findings, engineResults, config.githubToken);
   }
 
   const failedEngines = setOutputs(config, findings, engineResults, gate.passed);

@@ -1,11 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { renderSummary } from "../src/summary";
+import { formatDuration, renderSummary } from "../src/summary";
 import { countBySeverity, EngineResult, Finding } from "../src/schema";
 import { evaluateGate } from "../src/gate";
 import { parseSemgrepJson } from "../src/engines/semgrep";
 import { parseOpengrepJson } from "../src/engines/opengrep";
+import { TOOLS } from "../src/tool-versions";
 
 test("renderSummary shows engine states and escapes dynamic table content", () => {
   const findings: Finding[] = [
@@ -280,4 +281,123 @@ test("renderSummary neutralizes markdown link/image syntax embedded in a finding
     line: 1,
   });
   assert.ok(summary.includes(String.raw`matched: !\[pixel](https://evil.example/x.png?leak=1)`));
+});
+
+test("renderSummary shows scan context, per-engine versions, durations and severity counts", () => {
+  const findings: Finding[] = [
+    { engine: "bandit", ruleId: "B307", severity: "high", message: "eval", file: "a.py", line: 3 },
+    { engine: "bandit", ruleId: "B101", severity: "low", message: "assert", file: "a.py", line: 9 },
+  ];
+  const engines: EngineResult[] = [
+    { engine: "bandit", findings, status: "success", durationMs: 83_400 },
+    { engine: "detekt", findings: [], status: "skipped", note: "no Kotlin files", durationMs: 12 },
+  ];
+  const gate = evaluateGate(findings, { maxCritical: 0, maxHigh: 0, maxMedium: 50 });
+  const summary = renderSummary(findings, countBySeverity(findings), gate, true, engines, {
+    target: "test-fixtures",
+    engines: ["bandit", "detekt"],
+    maxConcurrency: 2,
+    startedAt: "2026-10-24T10:00:00.000Z",
+    durationMs: 90_000,
+    github: { sha: "0123456789abcdef0123456789abcdef01234567", ref: "refs/heads/main" },
+  });
+
+  assert.match(summary, /\*\*Target:\*\* `test-fixtures`/);
+  assert.match(summary, /\*\*Commit:\*\* `0123456` on `refs\/heads\/main`/);
+  assert.match(summary, /\*\*Duration:\*\* 1m 30s/);
+  assert.ok(
+    summary.includes(`| **bandit** | ✅ success | \`${TOOLS.bandit.version}\` | 1m 23s | · | 1 | · | 1 | · |  |`),
+  );
+  assert.ok(summary.includes("| **detekt** | ℹ️ skipped | – | 0.0s | · | · | · | · | · | no Kotlin files |"));
+});
+
+test("renderSummary gate table compares found counts with thresholds", () => {
+  const findings: Finding[] = [
+    { engine: "bandit", ruleId: "B307", severity: "high", message: "eval", file: "a.py", line: 3 },
+  ];
+  const gate = evaluateGate(findings, { maxCritical: 0, maxHigh: 0, maxMedium: 50 });
+  const engines: EngineResult[] = [{ engine: "bandit", findings, status: "success" }];
+
+  const enforced = renderSummary(findings, countBySeverity(findings), gate, true, engines);
+  assert.match(enforced, /❌ \*\*Failed\*\* — 1 high \(max 0\)/);
+  assert.ok(enforced.includes("| 🔴 high | 1 | 0 | ❌ exceeded |"));
+  assert.ok(enforced.includes("| 🟠 medium | 0 | 50 | ✅ ok |"));
+
+  const advisory = renderSummary(findings, countBySeverity(findings), gate, false, engines);
+  assert.match(advisory, /not enforced \(`gate: false`\) — would have failed: 1 high \(max 0\)/);
+});
+
+test("formatDuration carries rounded seconds into the minutes", () => {
+  assert.equal(formatDuration(8_349), "8.3s");
+  assert.equal(formatDuration(59_940), "59.9s");
+  assert.equal(formatDuration(59_960), "1m 0s");
+  assert.equal(formatDuration(83_400), "1m 23s");
+  assert.equal(formatDuration(119_600), "2m 0s");
+  assert.equal(formatDuration(3_599_700), "60m 0s");
+});
+
+function richSummary(findings: Finding[], sourceBaseUrl?: string): string {
+  const engineNames = [...new Set(findings.map((f) => f.engine))];
+  const engines: EngineResult[] = engineNames.map((engine) => ({
+    engine,
+    findings: findings.filter((f) => f.engine === engine),
+    status: "success",
+  }));
+  const gate = evaluateGate(findings, { maxCritical: 0, maxHigh: 0, maxMedium: 50 });
+  return renderSummary(findings, countBySeverity(findings), gate, true, engines, undefined, sourceBaseUrl);
+}
+
+const RICH: Finding[] = [
+  { engine: "semgrep", ruleId: "eval", severity: "high", message: "eval", file: "a.py", line: 1 },
+  { engine: "semgrep", ruleId: "eval", severity: "high", message: "eval", file: "a.py", line: 9 },
+  { engine: "gosec", ruleId: "G101", severity: "medium", message: "creds", file: "b.go", line: 2 },
+  { engine: "hadolint", ruleId: "DL3008", severity: "low", message: "pin", file: "Dockerfile", line: 4 },
+];
+
+test("renderSummary draws severity and engine pie charts", () => {
+  const summary = richSummary(RICH);
+  assert.match(summary, /```mermaid\npie showData title Findings by severity\n {4}"high" : 2\n {4}"medium" : 1\n {4}"low" : 1\n```/);
+  assert.match(summary, /pie showData title Findings by engine\n {4}"semgrep" : 2\n {4}"gosec" : 1\n {4}"hadolint" : 1\n/);
+  assert.doesNotMatch(summary, /"critical"/);
+});
+
+test("renderSummary sanitizes mermaid labels", () => {
+  const summary = richSummary([{ ...RICH[0], engine: 'evil"\n```' }]);
+  assert.match(summary, / {4}"evil_____" : 1/);
+});
+
+test("renderSummary omits charts, hotspots and top rules without findings", () => {
+  const summary = richSummary([]);
+  assert.doesNotMatch(summary, /mermaid|Hotspots|Top rules|### Findings/);
+});
+
+test("renderSummary ranks hotspot files with their worst severity and engines", () => {
+  const summary = richSummary(RICH);
+  assert.match(summary, /### 🔥 Hotspots\n\n\| File \| Findings \| Worst \| Engines \|\n\|---\|---:\|---\|---\|\n\| `a\.py` \| 2 \| 🔴 high \| semgrep \|/);
+});
+
+test("renderSummary lists the most frequent rules with doc links", () => {
+  const summary = richSummary(RICH);
+  assert.match(summary, /### 📋 Top rules[\s\S]*\| `eval` \| semgrep \| 2 \|/);
+  assert.match(summary, /\| \[`DL3008`]\(<https:\/\/github\.com\/hadolint\/hadolint\/wiki\/DL3008>\) \| hadolint \| 1 \|/);
+});
+
+test("renderSummary groups findings into collapsible severity sections", () => {
+  const summary = richSummary(RICH);
+  assert.match(summary, /<details open>\n<summary>🔴 <b>high<\/b> \(2\)<\/summary>/);
+  assert.match(summary, /<details>\n<summary>🟠 <b>medium<\/b> \(1\)<\/summary>/);
+  assert.match(summary, /<details>\n<summary>🟡 <b>low<\/b> \(1\)<\/summary>/);
+});
+
+test("renderSummary links finding locations to source lines when a base URL is given", () => {
+  const base = "https://github.com/owner/repo/blob/0123456789abcdef0123456789abcdef01234567";
+  assert.match(richSummary(RICH, base), new RegExp(String.raw`\[\`a\.py:9\`\]\(<${base.replaceAll(".", String.raw`\.`)}/a\.py#L9>\)`));
+  assert.match(richSummary(RICH), /\| `a\.py:9` \|/);
+});
+
+test("renderSummary caps rows per severity and points to the full reports", () => {
+  const many: Finding[] = Array.from({ length: 205 }, (_, i) => ({ ...RICH[3], line: i + 1 }));
+  const summary = richSummary(many);
+  assert.equal((summary.match(/\| `Dockerfile:\d+` \|/g) ?? []).length, 200);
+  assert.match(summary, /_… and 5 more low findings \(see the SARIF\/JSON report\)\._/);
 });

@@ -77,3 +77,28 @@ export function normalizeFindingPath(file: string, target: string): string {
   assertInsideWorkspace(absolute, "finding path");
   return path.relative(workspace, absolute).split(path.sep).join("/");
 }
+
+// Report files land in a directory a pull request can populate, so a checked-in
+// symlink named like a report would otherwise redirect the write to its target,
+// possibly outside the workspace. O_NOFOLLOW refuses a symlink as the final path
+// component; resolveOutputDir has already validated the directories above it.
+export function writeReportFile(file: string, content: string): void {
+  let fd: number;
+  try {
+    fd = fs.openSync(
+      file,
+      fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_TRUNC | fs.constants.O_NOFOLLOW,
+      0o644,
+    );
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ELOOP") {
+      throw new Error(`refusing to write report through symlink: ${file}`);
+    }
+    throw err;
+  }
+  try {
+    fs.writeFileSync(fd, content);
+  } finally {
+    fs.closeSync(fd);
+  }
+}

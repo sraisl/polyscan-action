@@ -11,11 +11,15 @@ inputs:
     required: false
     default: "."
   engines:
-    description: "Comma-separated engines to run, or 'all': semgrep,opengrep,bandit,eslint,spotbugs,trivy,detekt,gitleaks,betterleaks,gosec,hadolint,zizmor,trufflehog (all excludes opt-in opengrep and trufflehog)"
+    description: "Comma-separated engines to run, or 'all': semgrep,opengrep,bandit,eslint,oxlint,spotbugs,trivy,detekt,gitleaks,betterleaks,gosec,hadolint,zizmor,trufflehog (all excludes opt-in opengrep, eslint and trufflehog)"
     required: false
     default: "all"
   allow-risky-engines:
     description: "Run engines that execute repository code or contact third-party APIs (spotbugs, trufflehog) even on pull requests from forks. Leave false unless the workflow is known to handle untrusted code safely."
+    required: false
+    default: "false"
+  spotbugs-reuse-build:
+    description: "Reuse existing SpotBugs build outputs containing compiled classes instead of rebuilding their modules"
     required: false
     default: "false"
   opengrep-config:
@@ -62,14 +66,30 @@ inputs:
     description: "Write a CycloneDX SBOM (polyscan.sbom.json)"
     required: false
     default: "false"
-  upload-artifacts:
-    description: "Upload SARIF + SBOM as workflow artifacts"
+  json-report:
+    description: "Write a machine-readable JSON report (polyscan-report.json) with scan context, engine status and all findings"
     required: false
     default: "true"
+  upload-artifacts:
+    description: "Upload SARIF + SBOM + JSON report + summary as workflow artifacts"
+    required: false
+    default: "true"
+  artifact-name:
+    description: "Name of the uploaded report artifact. If the name is already used in the workflow run (matrix, several PolyScan steps), a job-qualified name is used instead."
+    required: false
+    default: "polyscan-reports"
   upload-sarif:
     description: "Emit a hint for uploading SARIF to GitHub code scanning (needs a follow-up upload-sarif step)"
     required: false
     default: "false"
+  reviewdog:
+    description: "Report findings via reviewdog: inline review comments on changed lines of pull requests, plus a neutral 'PolyScan' check with annotations for all findings. Needs 'permissions: checks: write, pull-requests: write'"
+    required: false
+    default: "false"
+  github-token:
+    description: "Token reviewdog uses to post review comments and checks"
+    required: false
+    default: "${{ github.token }}"
   trivy-image:
     description: "Docker image to scan with 'trivy image' (e.g. myapp:latest). Requires the image to be available in the local Docker daemon. Runs in addition to the filesystem scan."
     required: false
@@ -106,6 +126,8 @@ outputs:
     description: "Path to the generated SARIF file (if any)"
   sbom-file:
     description: "Path to the generated SBOM file (if any)"
+  json-file:
+    description: "Path to the generated JSON report (if any)"
 
 runs:
   using: "node24"

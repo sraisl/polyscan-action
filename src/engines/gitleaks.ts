@@ -6,7 +6,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import * as tc from "@actions/tool-cache";
 import { Finding, EngineResult, Severity } from "../schema";
-import { run, which } from "../exec";
+import { findPinnedOnPath, run } from "../exec";
 import { resolveTarget } from "../target";
 import { cachedTool, downloadVerified } from "../tools";
 import { githubReleaseUrl, TOOLS } from "../tool-versions";
@@ -99,8 +99,9 @@ export async function runGitleaks(target: string): Promise<EngineResult> {
 }
 
 async function ensureGitleaks(): Promise<string | null> {
-  if (await which("gitleaks")) return "gitleaks";
-  core.info(`gitleaks not found — downloading v${GITLEAKS_VERSION}…`);
+  const pinned = await findPinnedOnPath("gitleaks", GITLEAKS_VERSION, ["version"], core);
+  if (pinned) return pinned;
+  core.info(`gitleaks v${GITLEAKS_VERSION} not found on PATH — downloading…`);
   try {
     return await cachedTool("gitleaks", GITLEAKS_VERSION, "gitleaks", async (directory) => {
       const archive = await downloadVerified(
