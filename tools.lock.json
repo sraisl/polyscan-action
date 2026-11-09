@@ -78,10 +78,10 @@
     "oxlint": {
       "provider": "github",
       "repository": "oxc-project/oxc",
-      "version": "1.92.0",
+      "version": "1.93.0",
       "tagTemplate": "oxlint_v{version}",
       "assetTemplate": "oxlint-x86_64-unknown-linux-gnu.tar.gz",
-      "sha256": "ba3a4d581ff73af83b2e11432fa4abeff1c6c3fc24c3ddca9990246cee8b9a92"
+      "sha256": "6d0d37cb51d01449714f04e2dff0d87dca66c39a72544f667b29808899d2db39"
     },
     "reviewdog": {
       "provider": "github",
