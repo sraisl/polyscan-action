@@ -9,10 +9,10 @@
     "betterleaks": {
       "provider": "github",
       "repository": "betterleaks/betterleaks",
-      "version": "1.10.0",
+      "version": "1.10.1",
       "tagTemplate": "v{version}",
       "assetTemplate": "betterleaks_{version}_linux_x64.tar.gz",
-      "sha256": "9d9ad503cd5d80d18a939352266c3fcca52f10da9b83cd5cfe646989b13940fe"
+      "sha256": "c174b42d7aa60caf58c0c3e555c0e4bed01fe6b0d99a412bce777b5af4ce913e"
     },
     "detekt": {
       "provider": "github",
@@ -25,7 +25,7 @@
     "eslint": {
       "provider": "npm",
       "package": "eslint",
-      "version": "10.14.0"
+      "version": "10.15.0"
     },
     "findsecbugs": {
       "provider": "maven",
@@ -78,10 +78,10 @@
     "oxlint": {
       "provider": "github",
       "repository": "oxc-project/oxc",
-      "version": "1.92.0",
+      "version": "1.94.0",
       "tagTemplate": "oxlint_v{version}",
       "assetTemplate": "oxlint-x86_64-unknown-linux-gnu.tar.gz",
-      "sha256": "ba3a4d581ff73af83b2e11432fa4abeff1c6c3fc24c3ddca9990246cee8b9a92"
+      "sha256": "fc1a189a35417ebda77cac83b8bfe9e9d10a7eb27e0d2fe005d222fa01261e64"
     },
     "reviewdog": {
       "provider": "github",
@@ -94,7 +94,7 @@
     "semgrep": {
       "provider": "pypi",
       "package": "semgrep",
-      "version": "1.184.0"
+      "version": "1.185.0"
     },
     "spotbugs": {
       "provider": "github",
@@ -115,10 +115,10 @@
     "trufflehog": {
       "provider": "github",
       "repository": "trufflesecurity/trufflehog",
-      "version": "3.99.8",
+      "version": "3.99.9",
       "tagTemplate": "v{version}",
       "assetTemplate": "trufflehog_{version}_linux_amd64.tar.gz",
-      "sha256": "7c3b02f160f28929a467e29e20fba98746e0729f6e37c3c25761e4f8789abe08"
+      "sha256": "12050095c8063bf4d34f9f6cbce6ba9fa8d0deea9d503d0570364feba093658e"
     },
     "zizmor": {
       "provider": "github",
