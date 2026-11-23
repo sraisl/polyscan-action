@@ -13,6 +13,13 @@ tags and must not be reused or moved.
 
 ## [Unreleased]
 
+## [v17.4.1] - 2026-11-23
+
+### Changed
+
+- Updated the pinned scan engine versions in `tools.lock.json`: betterleaks 1.10.1, ESLint 10.15.0, oxlint 1.95.0,
+  Semgrep 1.186.0, TruffleHog 3.100.0 and zizmor 1.33.1.
+
 ## [v17.4.0] - 2026-11-08
 
 ### Added
